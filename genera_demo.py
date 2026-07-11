@@ -344,28 +344,88 @@ def genera_rate_events(conn, config, capacity_units, oggi_data, numero_eventi=45
 # sulla Costiera Amalfitana)
 # ---------------------------------------------------------------------------
 
-MODELLI_SEGNALI = [
-    (1, 1, "festivita", "Capodanno", 4),
-    (4, 25, "ponte", "Ponte del 25 Aprile", 5),
-    (5, 1, "ponte", "Ponte del 1 Maggio", 5),
-    (6, 24, "evento_locale", "Festa patronale di San Giovanni", 6),
-    (7, 3, "evento_locale", "Notte della Cultura in Costiera", 6),
-    (8, 6, "evento_locale", "Sagra del Tonno a Cetara", 8),
+# Festivita' nazionali italiane e "ponti", con data fissa (mese, giorno).
+MODELLI_SEGNALI_FISSI = [
+    (1, 1, "festivita", "Capodanno", 5),
+    (1, 6, "festivita", "Epifania", 3),
+    (4, 25, "ponte", "Festa della Liberazione (25 Aprile)", 5),
+    (5, 1, "ponte", "Festa dei Lavoratori (1 Maggio)", 5),
+    (6, 2, "ponte", "Festa della Repubblica (2 Giugno)", 5),
     (8, 15, "festivita", "Ferragosto", 9),
+    (11, 1, "festivita", "Ognissanti", 3),
+    (12, 8, "ponte", "Immacolata Concezione", 5),
+    (12, 25, "festivita", "Natale", 3),
+    (12, 26, "festivita", "Santo Stefano", 3),
+    (12, 31, "festivita", "San Silvestro / vigilia di Capodanno", 6),
+    # Eventi locali della Costiera Amalfitana con data pressoche' fissa.
+    (7, 20, "evento_locale", "Concerti del Ravello Festival in Costiera", 6),
     (9, 12, "evento_locale", "Regata storica delle Repubbliche Marinare", 7),
-    (12, 8, "ponte", "Ponte dell'Immacolata", 5),
-    (12, 31, "festivita", "Capodanno (vigilia)", 6),
+]
+
+
+def _data_valida(anno, mese, giorno):
+    """True se (anno, mese, giorno) e' una data valida (es. non 29 febbraio
+    in un anno non bisestile)."""
+    try:
+        date(anno, mese, giorno)
+        return True
+    except ValueError:
+        return False
+
+
+def _pasqua(anno):
+    """Calcola la domenica di Pasqua (calendario gregoriano) con
+    l'algoritmo di Gauss. E' un algoritmo puramente aritmetico, non serve
+    nessuna libreria esterna."""
+    a = anno % 19
+    b = anno // 100
+    c = anno % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mese = (h + l - 7 * m + 114) // 31
+    giorno = (h + l - 7 * m + 114) % 31 + 1
+    return date(anno, mese, giorno)
+
+
+def _primo_sabato_del_mese(anno, mese):
+    """Trova il primo sabato di un dato mese: comodo per eventi locali che
+    tradizionalmente si tengono "il primo sabato di luglio/agosto"."""
+    primo_giorno = date(anno, mese, 1)
+    giorni_da_aggiungere = (5 - primo_giorno.weekday()) % 7  # 5 = sabato
+    return primo_giorno + timedelta(days=giorni_da_aggiungere)
+
+
+# Eventi calcolati per ogni anno (data mobile), tipicamente le feste
+# cristiane e gli eventi locali "il primo sabato di un certo mese".
+MODELLI_SEGNALI_CALCOLATI = [
+    (_pasqua, "festivita", "Pasqua", 5),
+    (lambda anno: _pasqua(anno) + timedelta(days=1), "ponte", "Pasquetta (Lunedi' dell'Angelo)", 5),
+    (lambda anno: _primo_sabato_del_mese(anno, 7), "evento_locale", "Notte delle Lampare a Cetara", 10),
+    (lambda anno: _primo_sabato_del_mese(anno, 8), "evento_locale", "Sagra del Tonno e delle Alici di Cetara", 9),
 ]
 
 
 def genera_segnali_esterni(conn, oggi_data, inizio_storico, fine_futuro):
     righe = []
     for anno in range(inizio_storico.year, fine_futuro.year + 1):
-        for mese, giorno, tipo, descrizione, impatto_base in MODELLI_SEGNALI:
-            try:
-                data_evento = date(anno, mese, giorno)
-            except ValueError:
-                continue
+        eventi_anno = [
+            (date(anno, mese, giorno), tipo, descrizione, impatto_base)
+            for mese, giorno, tipo, descrizione, impatto_base in MODELLI_SEGNALI_FISSI
+            if _data_valida(anno, mese, giorno)
+        ]
+        eventi_anno += [
+            (funzione_data(anno), tipo, descrizione, impatto_base)
+            for funzione_data, tipo, descrizione, impatto_base in MODELLI_SEGNALI_CALCOLATI
+        ]
+
+        for data_evento, tipo, descrizione, impatto_base in eventi_anno:
             if not (inizio_storico <= data_evento <= fine_futuro):
                 continue
             impatto = max(1, min(10, impatto_base + random.randint(-1, 1)))
