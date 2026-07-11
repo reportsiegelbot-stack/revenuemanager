@@ -1,0 +1,10 @@
+data_prenotazione,data_arrivo,notti,tipologia,canale,prezzo_totale,stato
+01/06/2026,10/07/2026,3,CLA,booking_engine,540,confermata
+15/05/2026,05/08/2026,7,SUP,booking_com,2100,confermata
+20/06/2026,25/06/2026,2,DLX,expedia,760,cancellata
+02/07/2026,15/07/2026,4,SUI,bedbank,3200,confermata
+non-e-una-data,20/07/2026,2,CLA,booking_engine,300,confermata
+10/06/2026,12/07/2026,-1,SUP,booking_engine,400,confermata
+11/06/2026,14/07/2026,3,ZZZ,booking_engine,600,confermata
+12/06/2026,16/07/2026,3,DLX,booking_com,abc,confermata
+13/06/2026,18/07/2026,2,JSU,expedia,900,stato_boh

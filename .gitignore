@@ -1,0 +1,9 @@
+# Database generato dagli script (contiene dati demo o dati reali locali)
+vault.db
+
+# Report generati
+report/*.html
+
+# File di cache di Python
+__pycache__/
+*.pyc

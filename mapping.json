@@ -1,0 +1,22 @@
+{
+  "_commento": "Questo file dice a importa_csv.py come leggere un CSV esterno qualsiasi. Modifica solo i valori (le chiavi a sinistra sono i nomi delle colonne nel TUO file CSV), non serve toccare il codice Python.",
+  "separatore": ",",
+  "formato_data": "%d/%m/%Y",
+  "colonne": {
+    "data_prenotazione": "created_date",
+    "data_arrivo": "arrival_date",
+    "notti": "nights",
+    "tipologia": "capacity_unit_code",
+    "canale": "channel",
+    "prezzo_totale": "total_price",
+    "stato": "status"
+  },
+  "valori_stato": {
+    "confermata": "confirmed",
+    "confirmed": "confirmed",
+    "ok": "confirmed",
+    "cancellata": "cancelled",
+    "annullata": "cancelled",
+    "cancelled": "cancelled"
+  }
+}
