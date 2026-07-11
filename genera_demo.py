@@ -101,6 +101,20 @@ PESI_NOTTI = [10, 25, 25, 20, 10, 5, 5]
 NOTTI_MEDIE = sum(o * p for o, p in zip(OPZIONI_NOTTI, PESI_NOTTI)) / sum(PESI_NOTTI)
 
 
+def arrotonda_probabilistico(valore):
+    """Arrotonda un valore atteso non intero in modo probabilistico invece
+    che sempre per difetto: un valore atteso di 0.2 genera un evento circa
+    2 volte su 10, non zero volte su dieci. Senza questo accorgimento le
+    tipologie con pochissime unita' (es. 1 sola) non riceverebbero MAI una
+    prenotazione (0.x si arrotonderebbe sempre a 0), restando sempre
+    "piene" in modo irrealistico per tutto il periodo generato."""
+    intero = int(valore)
+    frazione = valore - intero
+    if random.random() < frazione:
+        intero += 1
+    return intero
+
+
 def notti_casuali():
     """Numero di notti della prenotazione: la maggior parte dei soggiorni
     e' breve (2-4 notti), pochi molto lunghi."""
@@ -156,7 +170,7 @@ def genera_prenotazioni(conn, config, capacity_units, oggi_data):
             # Per non vendere piu' unita' di quante ce ne siano (legge di
             # Little: occupazione = arrivi_al_giorno * notti_medie) dividiamo
             # per la durata media del soggiorno.
-            n_prenotazioni = round(unita["total_units"] * target / NOTTI_MEDIE)
+            n_prenotazioni = arrotonda_probabilistico(unita["total_units"] * target / NOTTI_MEDIE)
             if n_prenotazioni <= 0:
                 continue
 

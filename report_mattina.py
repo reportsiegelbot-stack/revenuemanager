@@ -256,14 +256,42 @@ def registra_decisione(conn, oggi_data, voce, decision_type, suggestion, reasoni
 
 def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
     soglie = config["rules_thresholds"]
+    # Sotto questa soglia di unita' TOTALI, le percentuali non sono piu'
+    # significative (con 1 unita' su 1 la disponibilita' e' sempre 0% o
+    # 100%, non c'e' via di mezzo): per queste tipologie ragioniamo in
+    # unita' assolute residue invece che in percentuale.
+    soglia_scarse = soglie.get("unita_scarse", {})
+    soglia_totale_unita_scarse = soglia_scarse.get("soglia_totale_unita", 3)
+    soglia_unita_assolute_scarse = soglia_scarse.get("soglia_unita_assolute", 1)
     suggerimenti = []
 
     for voce in situazione:
         if voce["disponibilita_pct"] is None:
             continue
 
+        tipologia_scarsa = (
+            voce["unita_totale"] is not None and voce["unita_totale"] <= soglia_totale_unita_scarse
+        )
+
         s = soglie["aumento_prezzo"]
-        if (
+        if tipologia_scarsa:
+            # Regola "unita_scarse": niente soglie percentuali. Se restano
+            # poche unita' in assoluto (ma almeno una: a disponibilita' 0
+            # non c'e' nulla da vendere) e manca abbastanza tempo, vale la
+            # pena provare a venderle a un prezzo piu' alto.
+            if 0 < voce["disponibili"] <= soglia_unita_assolute_scarse and voce["giorni_al_target"] > s["giorni_minimi"]:
+                urgenza = "alta"
+                testo = f"Aumentare il prezzo del {s['aumento_pct']}%"
+                verbo = "resta" if voce["disponibili"] == 1 else "restano"
+                motivo = (
+                    f"Per {voce['unita_name']} (solo {voce['unita_totale']} unita' in totale) il "
+                    f"{formatta_data_estesa(voce['data'])} {verbo} {voce['disponibili']} unita' a "
+                    f"{voce['giorni_al_target']} giorni dalla data: e' una tipologia scarsa e richiesta, "
+                    "vale la pena provare a venderla a un prezzo piu' alto."
+                )
+                suggerimenti.append({"voce": voce, "tipo": "unita_scarse_aumento", "azione": testo, "motivo": motivo, "urgenza": urgenza})
+                registra_decisione(conn, oggi_data, voce, "unita_scarse_aumento", testo, motivo, urgenza)
+        elif (
             voce["disponibili"] > 0
             and voce["disponibilita_pct"] < s["disponibilita_max_pct"]
             and voce["giorni_al_target"] > s["giorni_minimi"]
