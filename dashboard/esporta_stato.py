@@ -56,13 +56,21 @@ from importa_log_disponibilita import (  # noqa: E402
     rileva_separatore,
 )
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 NOME_FILE_JSON_DEFAULT = "dati.json"
 NOME_FILE_STANDALONE_DEFAULT = "dashboard_standalone.html"
 NOME_TEMPLATE_HTML = "dashboard.html"
 NOME_GRIGLIA_2027_DEFAULT = "griglia_2027_tutte_tipologie.csv"
-COLONNE_GRIGLIA_2027 = ["data", "tipologia", "prezzo", "fascia"]
-MARCATORE_DATI_INCORPORATI = "<!-- DATI_INCORPORATI -->"
+# Colonne attese nel CSV della griglia 2027 (v1.1, allineate al template
+# dashboard.html "quadro del mattino"): "giorno" e' un'etichetta libera
+# (es. il giorno della settimana) mostrata cosi' com'e', non validata.
+COLONNE_GRIGLIA_2027 = ["data", "giorno", "codice", "tipologia", "prezzo_eur", "fascia"]
+
+# Il template dashboard.html incorpora i dati sostituendo ESATTAMENTE questa
+# stringa (marcatore vuoto) con /*__DATI_INIZIO__*/ <json> /*__DATI_FINE__*/.
+MARCATORE_INIZIO = "/*__DATI_INIZIO__*/"
+MARCATORE_FINE = "/*__DATI_FINE__*/"
+MARCATORE_VUOTO = MARCATORE_INIZIO + " null " + MARCATORE_FINE
 
 
 # ---------------------------------------------------------------------------
@@ -193,15 +201,27 @@ def _carica_griglia_2027(percorso):
         riga = {intestazione[i]: (valori[i] if i < len(valori) else "") for i in range(len(intestazione))}
         try:
             data_riga = parse_data_flessibile(riga["data"])
-            prezzo = parse_numero_flessibile(riga["prezzo"])
+            prezzo = parse_numero_flessibile(riga["prezzo_eur"])
             fascia = (riga["fascia"] or "").strip().upper()
+            codice = (riga["codice"] or "").strip().upper()
             tipologia = (riga["tipologia"] or "").strip()
-            if prezzo is None or not fascia or not tipologia:
+            if prezzo is None or not fascia or not codice or not tipologia:
                 raise ValueError("campo mancante")
         except ValueError:
             scartate += 1
             continue
-        voci.append({"data": formatta_data(data_riga), "tipologia": tipologia, "prezzo": prezzo, "fascia": fascia})
+        # "giorno" e' solo un'etichetta descrittiva (es. giorno della
+        # settimana): non e' obbligatoria riga per riga, una cella vuota
+        # non fa scartare la voce.
+        giorno = (riga.get("giorno") or "").strip()
+        voci.append({
+            "data": formatta_data(data_riga),
+            "giorno": giorno,
+            "codice": codice,
+            "tipologia": tipologia,
+            "prezzo_eur": prezzo,
+            "fascia": fascia,
+        })
 
     nota = f"{len(voci)} voci caricate da '{percorso}'."
     if scartate:
@@ -292,25 +312,32 @@ def costruisci_stato(conn, config, capacity_units, oggi_data, orizzonte_giorni, 
 
 def genera_standalone(cartella_dashboard, dati, nome_output):
     """Produce dashboard_standalone.html: il template dashboard.html con i
-    dati incorporati al posto del marcatore, cosi' funziona con un doppio
-    click anche senza server locale e anche nei browser che bloccano la
-    lettura di file JSON esterni via fetch() da file://."""
+    dati incorporati al posto del marcatore vuoto
+    "/*__DATI_INIZIO__*/ null /*__DATI_FINE__*/", cosi' la pagina funziona
+    con un doppio click anche senza server locale e anche nei browser che
+    bloccano la lettura di file JSON esterni via fetch() da file://.
+
+    Se il marcatore non c'e' (il template e' cambiato in modo
+    incompatibile) la funzione FALLISCE esplicitamente (eccezione): non
+    deve mai produrre in silenzio una pagina senza dati incorporati."""
     percorso_template = cartella_dashboard / NOME_TEMPLATE_HTML
     if not percorso_template.exists():
-        print(f"[AVVISO] '{percorso_template.name}' non trovato: dashboard_standalone.html non generato.", file=sys.stderr)
-        return None
+        raise FileNotFoundError(f"'{percorso_template}' non trovato: impossibile generare la pagina standalone.")
 
     template = percorso_template.read_text(encoding="utf-8")
-    if MARCATORE_DATI_INCORPORATI not in template:
-        print(
-            f"[AVVISO] '{percorso_template.name}' non contiene il marcatore {MARCATORE_DATI_INCORPORATI}: "
-            "dashboard_standalone.html non generato.",
-            file=sys.stderr,
+    if MARCATORE_VUOTO not in template:
+        raise ValueError(
+            f"il marcatore '{MARCATORE_VUOTO}' non e' presente in '{percorso_template.name}': "
+            "il template e' cambiato in modo incompatibile con questo script, non genero una pagina rotta."
         )
-        return None
 
-    blocco_dati = "<script>\nwindow.DATI_INCORPORATI = " + json.dumps(dati, ensure_ascii=False) + ";\n</script>"
-    pagina_standalone = template.replace(MARCATORE_DATI_INCORPORATI, blocco_dati)
+    blocco_dati = MARCATORE_INIZIO + " " + json.dumps(dati, ensure_ascii=False) + " " + MARCATORE_FINE
+    pagina_standalone = template.replace(MARCATORE_VUOTO, blocco_dati)
+
+    # Verifica esplicita che la sostituzione sia andata a buon fine (e non,
+    # es., che sia rimasto un secondo marcatore vuoto invariato altrove).
+    assert blocco_dati in pagina_standalone, "la sostituzione dei dati incorporati non e' andata a buon fine"
+    assert MARCATORE_VUOTO not in pagina_standalone, "il marcatore vuoto e' ancora presente dopo la sostituzione"
 
     percorso_output = cartella_dashboard / nome_output
     percorso_output.write_text(pagina_standalone, encoding="utf-8")
@@ -364,9 +391,14 @@ def main(argv=None):
     print(f"  - alert: {len(dati['alert'])} voci")
 
     if not args.no_standalone:
-        percorso_standalone = genera_standalone(cartella_dashboard, dati, NOME_FILE_STANDALONE_DEFAULT)
-        if percorso_standalone:
-            print(f"Pagina autonoma generata: {percorso_standalone.resolve()}")
+        try:
+            percorso_standalone = genera_standalone(cartella_dashboard, dati, NOME_FILE_STANDALONE_DEFAULT)
+        except (FileNotFoundError, ValueError, AssertionError) as exc:
+            # Fallimento esplicito e visibile: niente pagina standalone
+            # vuota o rotta prodotta in silenzio.
+            print(f"[ERRORE] generazione di '{NOME_FILE_STANDALONE_DEFAULT}' fallita: {exc}", file=sys.stderr)
+            return 1
+        print(f"Pagina autonoma generata: {percorso_standalone.resolve()}")
 
     return 0
 

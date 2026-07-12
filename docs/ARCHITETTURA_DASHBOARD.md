@@ -43,6 +43,22 @@ con CSS/JS inline, senza dipendenze esterne. Domani potrebbe essere
 sostituita o affiancata da qualunque altro consumer dello stesso JSON,
 senza che il motore debba saperlo.
 
+Esistono due modi di consultarla, entrambi generati da
+`esporta_stato.py`:
+- `dashboard.html` + `dati.json` accanto: la pagina fa `fetch("dati.json")`
+  a runtime. Funziona servita da un server locale (`python3 -m http.server`);
+  molti browser bloccano `fetch()` di un file locale aperto con doppio
+  click, e in quel caso la pagina mostra un banner con le istruzioni.
+- `dashboard_standalone.html`: stesso template, ma con i dati incorporati
+  al posto del marcatore `/*__DATI_INIZIO__*/ null /*__DATI_FINE__*/`
+  (dentro `<script id="dati-incorporati">window.DATI = ...;</script>`).
+  Funziona con un doppio click, senza server e senza leggere nessun altro
+  file. Se il marcatore non e' presente nel template (es. e' stato
+  modificato in un modo incompatibile), `esporta_stato.py` **fallisce
+  esplicitamente** (eccezione + uscita con errore) invece di generare una
+  pagina senza dati: e' una scelta deliberata, per non lasciare in giro
+  una pagina che sembra funzionare ma e' vuota.
+
 ### Perche' separare cosi'
 
 Il vincolo "l'interfaccia legge solo il JSON" e' la parte importante:
@@ -75,10 +91,17 @@ l'ultimo valore) o il calcolo del prossimo cambio di stagione tariffaria.
 File: `dashboard/dati.json`. Oggetto radice con questi campi:
 
 ### `schema_version` (stringa)
-Es. `"1.0"`. Va incrementata (parte intera per cambi incompatibili, es.
-rinominare un campo; si puo' usare la parte decimale per aggiunte
+Attualmente `"1.1"`. Va incrementata (parte intera per cambi incompatibili,
+es. rinominare un campo; si puo' usare la parte decimale per aggiunte
 retrocompatibili) ogni volta che la struttura del JSON cambia in un modo
 che un consumer esistente potrebbe non aspettarsi.
+
+**Storico delle versioni:**
+- `1.0` — prima versione del contratto (sezione "Fondazione dashboard").
+- `1.1` — rinominati i campi di `griglia_2027.voci` per allinearli al
+  template `dashboard.html` "quadro del mattino" (`prezzo` -> `prezzo_eur`,
+  aggiunti `codice` e `giorno`): vedi sezione `griglia_2027` piu' sotto.
+  Nessun altro campo del contratto e' cambiato.
 
 ### `meta` (oggetto)
 | Campo | Tipo | Significato |
@@ -128,11 +151,22 @@ cosi' com'e', un punto per elemento della serie.
 |---|---|---|
 | `disponibile` | booleano | `false` se il file `griglia_2027_tutte_tipologie.csv` non e' stato trovato (o non e' valido) nella root del progetto. |
 | `nota` | stringa | Messaggio leggibile: quante voci caricate, quante scartate, o perche' la sezione e' vuota. |
-| `voci` | lista | Ogni voce: `{data, tipologia, prezzo, fascia}`. `fascia` e' una lettera (tipicamente A-D) usata dall'interfaccia per colorare il calendario. |
+| `voci` | lista | Ogni voce: `{data, giorno, codice, tipologia, prezzo_eur, fascia}` (dalla v1.1; nella v1.0 erano `{data, tipologia, prezzo, fascia}`). |
+
+Campi di ogni voce: `data` (ISO `YYYY-MM-DD`), `giorno` (etichetta libera,
+es. il giorno della settimana — puramente descrittiva, non validata),
+`codice` (codice tipologia, es. `CLA`, sempre maiuscolo), `tipologia`
+(nome per esteso, es. `Classic`), `prezzo_eur` (numero), `fascia` (lettera,
+tipicamente A-D, usata dall'interfaccia per colorare il calendario).
 
 Non e' un dato del database: e' un file CSV esterno opzionale, pensato per
 la griglia tariffaria dell'anno successivo definita a tavolino (non
-ancora "in produzione" nel motore delle regole).
+ancora "in produzione" nel motore delle regole). Le colonne attese nel CSV
+hanno esattamente questi nomi (`data`, `giorno`, `codice`, `tipologia`,
+`prezzo_eur`, `fascia`); date e numeri sono letti con lo stesso parsing
+tollerante (formato italiano o ISO, virgola o punto decimale) usato da
+`importa_log_disponibilita.py`, le cui funzioni sono importate anziche'
+duplicate.
 
 ### `decisioni` (lista, ultime 20)
 Storico delle proposte del motore (tabella `decision`), piu' recenti

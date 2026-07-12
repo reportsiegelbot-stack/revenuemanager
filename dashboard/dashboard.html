@@ -1,545 +1,427 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="it">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dashboard revenue-vault</title>
-<!--
-  dashboard.html
-  ---------------
-  Interfaccia statica: legge SOLO dashboard/dati.json (mai il database).
-  E' l'ultimo strato dell'architettura a strati del progetto:
-      dati (SQLite) -> motore (report_mattina.py) -> dati.json -> QUESTA PAGINA
-  Nessuna dipendenza esterna: niente CDN, niente librerie. CSS e JS sono
-  tutti qui dentro, cosi' la pagina funziona anche offline con un doppio
-  click. Se il browser blocca la lettura di dati.json da file:// (capita
-  spesso per motivi di sicurezza del browser), la pagina lo segnala e
-  spiega le due alternative: avviare un piccolo server locale, oppure
-  aprire dashboard_standalone.html (generato da esporta_stato.py con i
-  dati gia' incorporati dentro il file, senza bisogno di leggerne un altro).
--->
+<title>Cetus — Quadro del mattino</title>
 <style>
-  :root {
-    --blu: #10334f;
-    --blu-chiaro: #eef1f5;
-    --bordo: #e0e3e8;
-    --testo: #1f2933;
-    --testo-secondario: #57606a;
-    --ok: #1a7f37;
-    --attenzione: #9a6700;
-    --critico: #cf222e;
-    --sfondo: #f4f5f7;
-  }
-  * { box-sizing: border-box; }
-  body {
-    font-family: -apple-system, "Segoe UI", Arial, sans-serif;
-    margin: 0; padding: 0;
-    background: var(--sfondo);
-    color: var(--testo);
-  }
-  header.intestazione {
-    background: var(--blu); color: #fff;
-    padding: 20px 24px;
-  }
-  header.intestazione h1 { margin: 0 0 6px 0; font-size: 21px; }
-  header.intestazione p { margin: 2px 0; opacity: .88; font-size: 13px; }
-  .contenitore { max-width: 1200px; margin: 0 auto; padding: 20px; }
-  h2 {
-    border-bottom: 2px solid var(--blu); padding-bottom: 6px;
-    margin-top: 34px; font-size: 17px; color: var(--blu);
-  }
-  .dettaglio { color: var(--testo-secondario); font-size: 13px; }
+/* ============ CARTA NAUTICA DI CETARA — token ============ */
+:root{
+  --carta:#F7F6F1;        /* fondo carta */
+  --carta-2:#EFEDE4;      /* pannelli */
+  --inchiostro:#14333D;   /* testo, petrolio scuro */
+  --inchiostro-2:#4E6771; /* testo secondario */
+  --mare:#176B77;         /* accento primario */
+  --mare-chiaro:#D9E9EA;
+  --ambra:#A97410;        /* avvisi */
+  --ambra-chiara:#F5E9D0;
+  --allarme:#A93B2B;
+  --allarme-chiaro:#F3DFDA;
+  --ok:#2E6B47;
+  --fA:#2E6B47; --fB:#7FA05B; --fC:#D9A62E; --fD:#C77B4A;
+  --linea:#D8D4C6;
+  --raggio:10px;
+  --mono:"SF Mono","Cascadia Mono",Consolas,"Liberation Mono",monospace;
+  --serif:Georgia,"Iowan Old Style","Times New Roman",serif;
+  --sans:-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--carta);color:var(--inchiostro);font:15px/1.5 var(--sans)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
 
-  /* --- messaggio di errore / fallback fetch bloccato ------------------- */
-  #errore-caricamento {
-    display: none;
-    background: #fff8e6; border: 1px solid var(--attenzione);
-    border-left: 5px solid var(--attenzione);
-    padding: 16px 20px; margin: 20px; border-radius: 4px;
-  }
-  #errore-caricamento h2 { border: none; margin-top: 0; color: var(--attenzione); }
-  #errore-caricamento code {
-    background: #fff; border: 1px solid var(--bordo); border-radius: 3px;
-    padding: 1px 6px; font-size: 13px;
-  }
+/* ============ intestazione ============ */
+header{background:var(--inchiostro);color:#EDE9DC;padding:20px 22px 18px}
+.testata{max-width:1180px;margin:0 auto;display:flex;flex-wrap:wrap;gap:12px 24px;align-items:baseline;justify-content:space-between}
+h1{font:400 26px/1.15 var(--serif);letter-spacing:.4px;margin:0}
+h1 .quadro{color:#9CC3C6;font-style:italic}
+.sotto{font-size:13px;color:#B9C7CB;margin-top:4px}
+.pillole{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.pillola{border:1px solid rgba(237,233,220,.35);border-radius:999px;padding:5px 13px;font-size:13px;white-space:nowrap}
+.pillola b{font-family:var(--mono)}
+.pillola.fresca{background:rgba(46,107,71,.35);border-color:rgba(140,200,160,.5)}
+.pillola.ferma{background:rgba(169,116,16,.4);border-color:rgba(230,190,110,.6)}
+.pillola.morta{background:rgba(169,59,43,.45);border-color:rgba(240,160,140,.6)}
 
-  /* --- card KPI ---------------------------------------------------------*/
-  .kpi-griglia {
-    display: grid; gap: 14px;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    margin-top: 12px;
-  }
-  .kpi-card {
-    background: #fff; border: 1px solid var(--bordo); border-left: 4px solid var(--blu);
-    border-radius: 4px; padding: 14px 16px;
-  }
-  .kpi-card .numero { font-size: 30px; font-weight: bold; color: var(--blu); line-height: 1.1; }
-  .kpi-card .etichetta { font-size: 13px; color: var(--testo-secondario); margin-top: 4px; }
-  .kpi-card.allerta .numero { color: var(--critico); }
+main{max-width:1180px;margin:0 auto;padding:20px 18px 60px}
+section{margin-top:34px}
+h2{font:400 21px/1.2 var(--serif);margin:0 0 4px;border-bottom:1px solid var(--linea);padding-bottom:8px}
+h2 .conta{font:13px var(--mono);color:var(--inchiostro-2);margin-left:8px}
+.spiega{font-size:13px;color:var(--inchiostro-2);margin:6px 0 14px}
 
-  /* --- tabelle ------------------------------------------------------- */
-  table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 13px; background: #fff; }
-  th, td { border: 1px solid var(--bordo); padding: 6px 10px; text-align: left; }
-  th { background: var(--blu-chiaro); }
-  tr:nth-child(even) { background: #fafbfc; }
-  td.ok { color: var(--ok); font-weight: bold; }
-  td.attenzione { color: var(--attenzione); font-weight: bold; }
-  td.critico { color: var(--critico); font-weight: bold; }
-  .tabella-scroll { overflow-x: auto; }
+/* ============ avviso log fermo ============ */
+.banner{display:none;margin:18px 0 0;padding:12px 16px;border-radius:var(--raggio);font-size:14px;border:1px solid}
+.banner.ambra{display:block;background:var(--ambra-chiara);border-color:#DFC286;color:#6B4A08}
+.banner.allarme{display:block;background:var(--allarme-chiaro);border-color:#DFA898;color:#6E2418}
+.banner b{font-family:var(--mono)}
 
-  /* --- booking curve (grafici SVG) ------------------------------------ */
-  .curve-griglia {
-    display: grid; gap: 14px;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    margin-top: 12px;
-  }
-  .curva-card {
-    background: #fff; border: 1px solid var(--bordo); border-radius: 4px; padding: 10px 12px;
-  }
-  .curva-card .titolo { font-size: 13px; font-weight: bold; margin-bottom: 4px; }
-  .curva-card .sottotitolo { font-size: 12px; color: var(--testo-secondario); margin-bottom: 6px; }
-  svg.grafico-svg { width: 100%; height: auto; display: block; }
+/* ============ attenzione oggi ============ */
+.attenzione{display:grid;grid-template-columns:repeat(auto-fill,minmax(255px,1fr));gap:12px}
+.carta-att{background:#fff;border:1px solid var(--linea);border-left:4px solid var(--allarme);border-radius:var(--raggio);padding:12px 14px}
+.carta-att .quando{font:12px var(--mono);color:var(--inchiostro-2)}
+.carta-att .chi{font-weight:600;margin:2px 0 4px}
+.carta-att .cosa{font-size:13.5px;color:var(--inchiostro-2)}
+.vuoto{background:var(--carta-2);border:1px dashed var(--linea);border-radius:var(--raggio);padding:18px;text-align:center;color:var(--inchiostro-2);font-size:14px}
 
-  /* --- griglia 2027 (mini calendario) --------------------------------- */
-  .legenda-fasce { display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 0; font-size: 12px; }
-  .legenda-fasce span.pallino { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
-  .mesi-griglia { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); margin-top: 10px; }
-  .mese-card { background: #fff; border: 1px solid var(--bordo); border-radius: 4px; padding: 10px; }
-  .mese-card .titolo-mese { font-weight: bold; font-size: 13px; margin-bottom: 6px; text-transform: capitalize; }
-  .giorni-settimana, .giorni-mese { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
-  .giorni-settimana div { font-size: 10px; color: var(--testo-secondario); text-align: center; }
-  .giorno-cella {
-    aspect-ratio: 1 / 1; border-radius: 3px; font-size: 10px; color: #fff;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    cursor: pointer; border: none; padding: 0; font-family: inherit;
-  }
-  .giorno-cella.vuota { background: transparent; cursor: default; }
-  .giorno-cella .num { font-weight: bold; }
-  .giorno-cella .prezzo { font-size: 9px; }
-  .dettaglio-giorno {
-    margin-top: 8px; font-size: 12px; background: var(--blu-chiaro);
-    border-radius: 4px; padding: 8px 10px;
-  }
-  .dettaglio-giorno table { margin-top: 4px; }
+/* ============ curve ============ */
+.filtri{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.filtri button{font:13px var(--sans);border:1px solid var(--linea);background:#fff;color:var(--inchiostro);
+  border-radius:999px;padding:5px 14px;cursor:pointer}
+.filtri button[aria-pressed="true"]{background:var(--mare);border-color:var(--mare);color:#fff}
+.filtri button:focus-visible{outline:2px solid var(--mare);outline-offset:2px}
+.curve{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}
+.curva{background:#fff;border:1px solid var(--linea);border-radius:var(--raggio);padding:10px 12px 6px}
+.curva h3{margin:0;font:600 14px var(--sans)}
+.curva .meta{font:11.5px var(--mono);color:var(--inchiostro-2);margin:1px 0 4px}
+.curva svg{display:block;width:100%;height:auto}
+.curva .piede{display:flex;justify-content:space-between;font:11.5px var(--mono);color:var(--inchiostro-2);padding:2px 0 4px}
 
-  /* --- suggerimenti/decisioni ------------------------------------------ */
-  .decisione-card {
-    background: #fff; border: 1px solid var(--bordo); border-left: 4px solid var(--blu);
-    border-radius: 4px; padding: 10px 14px; margin-bottom: 8px;
-  }
-  .decisione-card summary { cursor: pointer; font-size: 13px; }
-  .decisione-card summary strong { color: var(--blu); }
-  .badge {
-    display: inline-block; padding: 2px 8px; border-radius: 10px;
-    font-size: 11px; font-weight: bold; color: #fff; margin-right: 6px;
-  }
-  .badge-pending { background: var(--testo-secondario); }
-  .badge-accepted { background: var(--ok); }
-  .badge-ignored { background: var(--critico); }
-  .livelli-prezzo { color: var(--testo-secondario); font-size: 13px; margin: 8px 0 4px 0; padding-left: 0; list-style: none; }
-  .livelli-prezzo li { margin-bottom: 2px; }
-  .sintesi { font-size: 13px; margin-top: 6px; }
+/* ============ situazione ============ */
+.scorri{overflow-x:auto;border:1px solid var(--linea);border-radius:var(--raggio);background:#fff}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:560px}
+th{position:sticky;top:0;background:var(--carta-2);text-align:left;font:600 12px var(--sans);
+  text-transform:uppercase;letter-spacing:.5px;color:var(--inchiostro-2);padding:9px 12px;border-bottom:1px solid var(--linea)}
+td{padding:8px 12px;border-bottom:1px solid #EEEBE0;vertical-align:middle}
+tr:last-child td{border-bottom:none}
+.barra{background:var(--mare-chiaro);border-radius:4px;height:8px;min-width:70px;position:relative;overflow:hidden}
+.barra i{position:absolute;inset:0;background:var(--mare);border-radius:4px}
+.poca .barra i{background:var(--allarme)}
+td.disp{white-space:nowrap}
 
-  footer { margin-top: 40px; color: #8a94a1; font-size: 12px; text-align: center; padding: 20px; }
+/* ============ griglia 2027 ============ */
+.calendari{display:grid;grid-template-columns:repeat(auto-fill,minmax(235px,1fr));gap:16px}
+.mese{background:#fff;border:1px solid var(--linea);border-radius:var(--raggio);padding:10px 12px 12px}
+.mese h3{margin:0 0 8px;font:400 16px var(--serif);text-align:center}
+.settimana{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:3px}
+.gg{font:10px var(--mono);color:var(--inchiostro-2);text-align:center}
+.cella{aspect-ratio:1;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  font:10px var(--mono);color:#fff;cursor:pointer;border:none;padding:0}
+.cella:focus-visible{outline:2px solid var(--inchiostro);outline-offset:1px}
+.cella .n{font-size:9px;opacity:.85}.cella .p{font-weight:700;font-size:10.5px}
+.cella.fuori{background:none;cursor:default}
+.fascia-A{background:var(--fA)}.fascia-B{background:var(--fB)}
+.fascia-C{background:var(--fC);color:#4A3708}.fascia-D{background:var(--fD)}
+.legenda{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;margin:12px 0 0;color:var(--inchiostro-2)}
+.legenda i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:5px}
+.dettaglio-giorno{position:fixed;inset:auto 16px 16px auto;max-width:300px;background:var(--inchiostro);color:#EDE9DC;
+  border-radius:var(--raggio);padding:14px 16px;box-shadow:0 8px 30px rgba(20,51,61,.35);display:none;z-index:50}
+.dettaglio-giorno.aperto{display:block}
+.dettaglio-giorno h4{margin:0 0 8px;font:400 16px var(--serif)}
+.dettaglio-giorno table{min-width:0;font-size:13px;color:#EDE9DC}
+.dettaglio-giorno td{border:none;padding:2px 10px 2px 0}
+.dettaglio-giorno .chiudi{position:absolute;top:8px;right:10px;background:none;border:none;color:#B9C7CB;font-size:16px;cursor:pointer}
 
-  @media (max-width: 640px) {
-    .kpi-card .numero { font-size: 24px; }
-    header.intestazione h1 { font-size: 18px; }
-  }
+/* ============ decisioni: la ricetta del prezzo ============ */
+.decisioni{display:grid;gap:12px}
+details.dec{background:#fff;border:1px solid var(--linea);border-radius:var(--raggio)}
+details.dec summary{list-style:none;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;padding:12px 16px;cursor:pointer}
+details.dec summary::-webkit-details-marker{display:none}
+details.dec summary:focus-visible{outline:2px solid var(--mare);outline-offset:-2px;border-radius:var(--raggio)}
+.dec .stato{font:11px var(--mono);text-transform:uppercase;letter-spacing:.6px;border-radius:4px;padding:2px 7px;
+  background:var(--ambra-chiara);color:#6B4A08}
+.dec .stato.applicata{background:#DDEBE1;color:var(--ok)}
+.dec .quando{font:12px var(--mono);color:var(--inchiostro-2)}
+.dec .titolo{font-weight:600}
+.dec .corpo{padding:0 16px 14px;border-top:1px dashed var(--linea)}
+.dec .sintesi{font-size:13.5px;color:var(--inchiostro-2);margin:10px 0 12px}
+.ricetta{margin:0;padding:0;list-style:none;border-left:2px solid var(--mare);display:grid;gap:0}
+.ricetta li{position:relative;padding:7px 10px 7px 18px;font-size:13.5px}
+.ricetta li::before{content:"";position:absolute;left:-6px;top:14px;width:10px;height:10px;border-radius:50%;
+  background:var(--carta);border:2px solid var(--mare)}
+.ricetta li:last-child{font-weight:600}
+
+footer{margin-top:50px;padding-top:14px;border-top:1px solid var(--linea);font-size:12px;color:var(--inchiostro-2)}
+@media (max-width:640px){
+  h1{font-size:21px} main{padding:14px 12px 40px}
+  .dettaglio-giorno{left:16px;right:16px;max-width:none}
+}
+@media (prefers-reduced-motion:no-preference){
+  details.dec .corpo{animation:apri .18s ease}
+  @keyframes apri{from{opacity:0;transform:translateY(-3px)}to{opacity:1}}
+}
 </style>
 </head>
 <body>
-
-<header class="intestazione">
-  <h1 id="titolo-struttura">Dashboard revenue-vault</h1>
-  <p id="sottotitolo-generato"></p>
-  <p id="sottotitolo-stagione"></p>
+<header>
+  <div class="testata">
+    <div>
+      <h1 id="nome-hotel">Hotel Cetus <span class="quadro">— quadro del mattino</span></h1>
+      <div class="sotto" id="sottotitolo">…</div>
+    </div>
+    <div class="pillole" id="pillole"></div>
+  </div>
 </header>
 
-<div id="errore-caricamento" class="contenitore">
-  <h2>Impossibile caricare dati.json</h2>
-  <p>Il browser ha bloccato la lettura del file <code>dati.json</code> (succede spesso aprendo la pagina
-     direttamente con un doppio click, per una restrizione di sicurezza dei browser sui file locali).</p>
-  <p><strong>Due alternative:</strong></p>
-  <ol>
-    <li>Avvia un piccolo server locale nella cartella <code>dashboard/</code> ed apri la pagina da li':<br>
-        <code>cd dashboard &amp;&amp; python3 -m http.server</code> poi vai su
-        <code>http://localhost:8000/dashboard.html</code></li>
-    <li>Apri invece <code>dashboard_standalone.html</code> (nella stessa cartella): contiene gia' i dati
-        incorporati e funziona con un semplice doppio click, senza bisogno di leggere nessun altro file.</li>
-  </ol>
-  <p class="dettaglio">Dettaglio tecnico: <span id="errore-dettaglio"></span></p>
-</div>
+<main>
+  <div id="banner-log" class="banner" role="status"></div>
+  <div id="errore-dati" class="banner" role="alert"></div>
 
-<div class="contenitore" id="contenuto-principale" style="display:none;">
+  <section id="sez-attenzione">
+    <h2>Da guardare oggi <span class="conta" id="conta-alert"></span></h2>
+    <p class="spiega">Le date e tipologie che chiedono un occhio, in ordine di urgenza (prima le più vicine).</p>
+    <div class="attenzione" id="lista-alert"></div>
+  </section>
 
-  <h2>Situazione generale</h2>
-  <div class="kpi-griglia" id="kpi-griglia"></div>
+  <section id="sez-curve">
+    <h2>Booking curve <span class="conta" id="conta-curve"></span></h2>
+    <p class="spiega">Camere libere nel tempo, una scheda per data monitorata: la linea che scende è il ritmo di vendita. In evidenza le date segnalate qui sopra.</p>
+    <div class="filtri" id="filtri-curve"></div>
+    <div class="curve" id="lista-curve"></div>
+  </section>
 
-  <h2>Booking curve</h2>
-  <p class="dettaglio">Una curva per ogni combinazione data/tipologia con almeno 2 rilevazioni: asse orizzontale
-     = data della rilevazione, asse verticale = camere libere rilevate in quel momento.</p>
-  <div class="curve-griglia" id="curve-griglia"></div>
-
-  <h2>Situazione per tipologia</h2>
-  <div class="tabella-scroll">
-    <table id="tabella-situazione">
-      <thead>
-        <tr><th>Data</th><th>Tipologia</th><th>Camere libere</th><th>Disp. %</th><th>Prezzo del giorno</th></tr>
-      </thead>
+  <section id="sez-situazione">
+    <h2>Situazione per tipologia <span class="conta" id="conta-situazione"></span></h2>
+    <p class="spiega">Ultima rilevazione dal log disponibilità: camere libere e prezzo del giorno.</p>
+    <div class="scorri"><table id="tab-situazione">
+      <thead><tr><th>Data</th><th>Tipologia</th><th>Libere</th><th>Disponibilità</th><th>Prezzo giorno</th></tr></thead>
       <tbody></tbody>
-    </table>
-  </div>
+    </table></div>
+  </section>
 
-  <h2>Griglia tariffaria 2027</h2>
-  <p class="dettaglio" id="griglia-2027-nota"></p>
-  <div id="griglia-2027-legenda" class="legenda-fasce" style="display:none;">
-    <span><span class="pallino" style="background:#1b5e20"></span>Fascia A</span>
-    <span><span class="pallino" style="background:#43a047"></span>Fascia B</span>
-    <span><span class="pallino" style="background:#f1c40f"></span>Fascia C</span>
-    <span><span class="pallino" style="background:#e67e22"></span>Fascia D</span>
-    <span class="dettaglio">(prezzo mostrato: tipologia Classic; le altre tipologie sono a comparsa, clicca un giorno)</span>
-  </div>
-  <div class="mesi-griglia" id="griglia-2027-mesi"></div>
-  <div id="griglia-2027-dettaglio" class="dettaglio-giorno" style="display:none;"></div>
+  <section id="sez-griglia">
+    <h2>Griglia 2027 <span class="conta" id="conta-griglia"></span></h2>
+    <p class="spiega" id="nota-griglia">Proposta di apertura, prezzo Classic in cella; tocca un giorno per tutte le tipologie. I colori sono le fasce di domanda 2025.</p>
+    <div class="calendari" id="calendari"></div>
+    <div class="legenda" id="legenda-griglia"></div>
+  </section>
 
-  <h2>Decisioni recenti</h2>
-  <div id="lista-decisioni"></div>
+  <section id="sez-decisioni">
+    <h2>Decisioni recenti <span class="conta" id="conta-decisioni"></span></h2>
+    <p class="spiega">Ogni suggerimento di prezzo mostra la sua ricetta: i passaggi che portano al numero, nessuna scatola nera.</p>
+    <div class="decisioni" id="lista-decisioni"></div>
+  </section>
 
+  <footer id="piede"></footer>
+</main>
+
+<div class="dettaglio-giorno" id="dettaglio" role="dialog" aria-label="Prezzi del giorno">
+  <button class="chiudi" id="chiudi-dettaglio" aria-label="Chiudi">✕</button>
+  <h4 id="dettaglio-titolo"></h4>
+  <table><tbody id="dettaglio-corpo"></tbody></table>
 </div>
 
-<footer>revenue-vault &middot; dashboard statica, legge solo dati.json, nessun dato inviato all'esterno</footer>
+<!-- I dati vengono incorporati qui da esporta_stato.py (pagina standalone).
+     Se restano null, la pagina prova a leggere dati.json accanto a sé. -->
+<script id="dati-incorporati">window.DATI = /*__DATI_INIZIO__*/ null /*__DATI_FINE__*/;</script>
 
-<!-- DATI_INCORPORATI -->
 <script>
-(function () {
-  "use strict";
+"use strict";
+/* ============ utilità ============ */
+const $=s=>document.querySelector(s);
+const el=(t,c,txt)=>{const e=document.createElement(t); if(c)e.className=c; if(txt!=null)e.textContent=txt; return e;};
+const MESI=["gennaio","febbraio","marzo","aprile","maggio","giugno","luglio","agosto","settembre","ottobre","novembre","dicembre"];
+const MESI_B=["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
+const dataIT=iso=>{if(!iso)return "—";const d=new Date(iso.slice(0,10)+"T00:00:00");
+  return d.toLocaleDateString? `${["dom","lun","mar","mer","gio","ven","sab"][d.getDay()]} ${d.getDate()} ${MESI_B[d.getMonth()].toLowerCase()}` : iso;};
+const giorniFra=(a,b)=>Math.round((b-a)/86400000);
+const eur=v=>v==null?"—":`${Math.round(v)} €`;
 
-  // -------------------------------------------------------------------
-  // Utility generiche
-  // -------------------------------------------------------------------
+function avvia(dati){
+  const meta=dati.meta||{};
+  /* --- testata --- */
+  if(meta.nome_struttura) $("#nome-hotel").firstChild.textContent=meta.nome_struttura.split(" - ")[0]+" ";
+  const gen=meta.generato_il?new Date(meta.generato_il):null;
+  $("#sottotitolo").textContent=(meta.nome_struttura||"")+(gen?` · aggiornato ${gen.toLocaleString("it-IT",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}`:"");
+  const pill=$("#pillole");
+  const cs=meta.prossimo_cambio_stagione;
+  if(cs) pill.append(Object.assign(el("span","pillola"),{innerHTML:`stagione <b>${cs.da_stagione}</b> → ${cs.a_stagione} fra <b>${cs.giorni_mancanti}</b> gg`}));
 
-  function formattaDataIt(iso) {
-    // "2026-07-17" -> "17/07/2026"
-    if (!iso) { return "N/D"; }
-    var parti = iso.split("-");
-    if (parti.length !== 3) { return iso; }
-    return parti[2] + "/" + parti[1] + "/" + parti[0];
-  }
-
-  function numeroOND(valore, decimali, suffisso) {
-    if (valore === null || valore === undefined) { return "N/D"; }
-    return valore.toFixed(decimali === undefined ? 0 : decimali) + (suffisso || "");
-  }
-
-  function classeDisponibilita(pct) {
-    if (pct === null || pct === undefined) { return ""; }
-    if (pct < 15) { return "critico"; }
-    if (pct < 40) { return "attenzione"; }
-    return "ok";
-  }
-
-  function creaEl(tag, attributi, figli) {
-    var el = document.createElement(tag);
-    if (attributi) {
-      Object.keys(attributi).forEach(function (chiave) {
-        if (chiave === "testo") { el.textContent = attributi[chiave]; }
-        else if (chiave === "html") { el.innerHTML = attributi[chiave]; }
-        else { el.setAttribute(chiave, attributi[chiave]); }
-      });
+  /* --- freschezza del log (il dato deperibile) --- */
+  let ultima=null;
+  (dati.booking_curve||[]).forEach(c=>(c.serie||[]).forEach(p=>{
+    const d=new Date(p.data_rilevazione+"T00:00:00"); if(!ultima||d>ultima)ultima=d;}));
+  const oggi=gen||new Date();
+  if(ultima){
+    const gg=giorniFra(ultima,oggi);
+    const p=el("span","pillola "+(gg<=1?"fresca":gg<=3?"ferma":"morta"));
+    p.innerHTML=gg<=1?`log aggiornato <b>${gg===0?"oggi":"ieri"}</b>`:`log fermo da <b>${gg}</b> giorni`;
+    pill.append(p);
+    if(gg>=2){
+      const b=$("#banner-log"); b.className="banner "+(gg>=4?"allarme":"ambra");
+      b.innerHTML=`Il log disponibilità è fermo da <b>${gg} giorni</b> (ultima rilevazione ${dataIT(ultima.toISOString())}). Ogni giorno senza rilevazione è un punto di booking curve perso per sempre: aggiorna il foglio e rilancia l'export.`;
     }
-    (figli || []).forEach(function (figlio) { if (figlio) { el.appendChild(figlio); } });
-    return el;
+  }else{
+    const b=$("#banner-log"); b.className="banner ambra";
+    b.textContent="Nessuna rilevazione nel log disponibilità: le curve compariranno appena il foglio avrà i primi dati.";
   }
 
-  // -------------------------------------------------------------------
-  // Grafico SVG minimale per una serie storica di rilevazioni
-  // -------------------------------------------------------------------
+  /* --- da guardare oggi --- */
+  const alert=(dati.alert||[]).slice().sort((a,b)=>(a.data_target||"").localeCompare(b.data_target||""));
+  $("#conta-alert").textContent=alert.length?`${alert.length}`:"";
+  const la=$("#lista-alert");
+  if(!alert.length) la.append(el("div","vuoto","Nessuna segnalazione: giornata tranquilla."));
+  alert.forEach(a=>{
+    const c=el("div","carta-att");
+    c.append(el("div","quando",dataIT(a.data_target)));
+    c.append(el("div","chi",(a.tipologia_nome||a.tipologia_codice||"Hotel")+ " — "+(a.motivo||"")));
+    c.append(el("div","cosa",a.dettaglio||""));
+    la.append(c);
+  });
 
-  function disegnaCurvaSVG(serie, larghezza, altezza) {
-    var margine = { sopra: 10, sotto: 20, sinistra: 26, destra: 8 };
-    var wInterna = larghezza - margine.sinistra - margine.destra;
-    var hInterna = altezza - margine.sopra - margine.sotto;
-
-    var tempi = serie.map(function (p) { return new Date(p.data_rilevazione + "T00:00:00").getTime(); });
-    var valori = serie.map(function (p) { return p.camere_libere; });
-    var tMin = tempi[0];
-    var tMax = tempi[tempi.length - 1];
-    var spanT = Math.max(1, tMax - tMin);
-    var vMax = Math.max.apply(null, valori.concat([1]));
-
-    function x(i) { return margine.sinistra + ((tempi[i] - tMin) / spanT) * wInterna; }
-    function y(v) { return margine.sopra + hInterna - (v / vMax) * hInterna; }
-
-    var punti = serie.map(function (p, i) { return x(i).toFixed(1) + "," + y(p.camere_libere).toFixed(1); }).join(" ");
-    var cerchi = serie.map(function (p, i) {
-      return '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.camere_libere).toFixed(1) + '" r="2.4" fill="#10334f"></circle>';
-    }).join("");
-
-    var baseY = altezza - margine.sotto;
-    var svg = '<svg viewBox="0 0 ' + larghezza + ' ' + altezza + '" class="grafico-svg" role="img" aria-label="andamento camere libere">' +
-      '<line x1="' + margine.sinistra + '" y1="' + margine.sopra + '" x2="' + margine.sinistra + '" y2="' + baseY + '" stroke="#e0e3e8"></line>' +
-      '<line x1="' + margine.sinistra + '" y1="' + baseY + '" x2="' + (larghezza - margine.destra) + '" y2="' + baseY + '" stroke="#e0e3e8"></line>' +
-      '<polyline points="' + punti + '" fill="none" stroke="#10334f" stroke-width="2"></polyline>' +
-      cerchi +
-      '<text x="' + margine.sinistra + '" y="' + (altezza - 5) + '" font-size="9" fill="#57606a">' + formattaDataIt(serie[0].data_rilevazione) + '</text>' +
-      '<text x="' + (larghezza - margine.destra) + '" y="' + (altezza - 5) + '" font-size="9" text-anchor="end" fill="#57606a">' + formattaDataIt(serie[serie.length - 1].data_rilevazione) + '</text>' +
-      '<text x="2" y="' + (margine.sopra + 8) + '" font-size="9" fill="#57606a">' + vMax + '</text>' +
-      '<text x="2" y="' + baseY + '" font-size="9" fill="#57606a">0</text>' +
-      '</svg>';
-    return svg;
+  /* --- booking curve: piccole multiple SVG --- */
+  const curve=(dati.booking_curve||[]).filter(c=>(c.serie||[]).length>=2);
+  const inAlert=new Set(alert.map(a=>a.data_target+"|"+(a.tipologia_codice||"")));
+  const tipologie=[...new Set(curve.map(c=>c.tipologia_codice))];
+  const filtri=$("#filtri-curve"); let filtro={modo:"evidenza",tip:null};
+  const bEv=el("button",null,"In evidenza"); bEv.setAttribute("aria-pressed","true");
+  const bTutte=el("button",null,`Tutte (${curve.length})`); bTutte.setAttribute("aria-pressed","false");
+  filtri.append(bEv,bTutte);
+  const bTip={};
+  tipologie.forEach(t=>{const b=el("button",null,t); b.setAttribute("aria-pressed","false"); bTip[t]=b; filtri.append(b);
+    b.onclick=()=>{filtro.tip=filtro.tip===t?null:t; aggiornaFiltri(); disegnaCurve();};});
+  bEv.onclick=()=>{filtro.modo="evidenza"; aggiornaFiltri(); disegnaCurve();};
+  bTutte.onclick=()=>{filtro.modo="tutte"; aggiornaFiltri(); disegnaCurve();};
+  function aggiornaFiltri(){
+    bEv.setAttribute("aria-pressed",filtro.modo==="evidenza");
+    bTutte.setAttribute("aria-pressed",filtro.modo==="tutte");
+    tipologie.forEach(t=>bTip[t].setAttribute("aria-pressed",filtro.tip===t));
   }
-
-  // -------------------------------------------------------------------
-  // Sezioni della pagina
-  // -------------------------------------------------------------------
-
-  function renderIntestazione(dati) {
-    var meta = dati.meta || {};
-    document.getElementById("titolo-struttura").textContent = "Dashboard - " + (meta.nome_struttura || "revenue-vault");
-    var generato = meta.generato_il ? new Date(meta.generato_il).toLocaleString("it-IT") : "N/D";
-    document.getElementById("sottotitolo-generato").textContent = "Dati generati il " + generato + " (schema_version " + dati.schema_version + ")";
-
-    var cambio = meta.prossimo_cambio_stagione;
-    var testoStagione = "Nessun cambio di stagione tariffaria previsto nei prossimi mesi.";
-    if (cambio) {
-      testoStagione = "Prossimo cambio stagione tariffaria: da " + cambio.da_stagione + " a " + cambio.a_stagione +
-        " il " + formattaDataIt(cambio.data) + " (tra " + cambio.giorni_mancanti + " giorni).";
+  function svgCurva(c){
+    const W=250,H=96,PS=6,PB=14; const tot=c.camere_totali||Math.max(...c.serie.map(p=>p.camere_libere),1);
+    const xs=c.serie.map(p=>new Date(p.data_rilevazione+"T00:00:00").getTime());
+    const x0=Math.min(...xs), x1=Math.max(...xs)||x0+1;
+    const X=t=>PS+(W-2*PS)*((t-x0)/Math.max(1,(x1-x0)));
+    const Y=v=>PS+(H-PS-PB)*(1-v/tot);
+    let d="",area=`M ${X(xs[0])} ${H-PB}`;
+    c.serie.forEach((p,i)=>{const x=X(xs[i]),y=Y(p.camere_libere);
+      d+=(i?` L ${x} ${y}`:`M ${x} ${y}`); area+=` L ${x} ${y}`;});
+    area+=` L ${X(xs[xs.length-1])} ${H-PB} Z`;
+    const ult=c.serie[c.serie.length-1];
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Curva ${c.tipologia_nome} per ${c.data_target}">
+      <line x1="${PS}" y1="${H-PB}" x2="${W-PS}" y2="${H-PB}" stroke="#D8D4C6"/>
+      <path d="${area}" fill="#176B77" opacity=".12"/>
+      <path d="${d}" fill="none" stroke="#176B77" stroke-width="2"/>
+      <circle cx="${X(xs[xs.length-1])}" cy="${Y(ult.camere_libere)}" r="3.4" fill="#176B77"/>
+    </svg>`;
+  }
+  function disegnaCurve(){
+    const lc=$("#lista-curve"); lc.innerHTML="";
+    let scelte=curve;
+    if(filtro.tip) scelte=scelte.filter(c=>c.tipologia_codice===filtro.tip);
+    if(filtro.modo==="evidenza"){
+      const ev=scelte.filter(c=>inAlert.has(c.data_target+"|"+c.tipologia_codice));
+      scelte=(ev.length?ev:scelte).slice(0,12);
     }
-    document.getElementById("sottotitolo-stagione").textContent = testoStagione;
-  }
-
-  function renderKPI(dati) {
-    var contenitore = document.getElementById("kpi-griglia");
-    var dateMonitorate = {};
-    (dati.situazione || []).forEach(function (v) { dateMonitorate[v.data_target] = true; });
-    var nDate = Object.keys(dateMonitorate).length;
-
-    var ultimaRilevazione = null;
-    (dati.pickup || []).forEach(function (p) {
-      if (!ultimaRilevazione || p.ultima_rilevazione > ultimaRilevazione) { ultimaRilevazione = p.ultima_rilevazione; }
-    });
-
-    var nAlert = (dati.alert || []).length;
-
-    var card1 = creaEl("div", { "class": "kpi-card" }, [
-      creaEl("div", { "class": "numero", testo: String(nDate) }),
-      creaEl("div", { "class": "etichetta", testo: "date monitorate" }),
-    ]);
-    var card2 = creaEl("div", { "class": "kpi-card" }, [
-      creaEl("div", { "class": "numero", testo: ultimaRilevazione ? formattaDataIt(ultimaRilevazione) : "N/D" }),
-      creaEl("div", { "class": "etichetta", testo: "ultima rilevazione registrata" }),
-    ]);
-    var card3 = creaEl("div", { "class": "kpi-card" + (nAlert > 0 ? " allerta" : "") }, [
-      creaEl("div", { "class": "numero", testo: String(nAlert) }),
-      creaEl("div", { "class": "etichetta", testo: "alert attivi" }),
-    ]);
-    contenitore.appendChild(card1);
-    contenitore.appendChild(card2);
-    contenitore.appendChild(card3);
-  }
-
-  function renderBookingCurve(dati) {
-    var contenitore = document.getElementById("curve-griglia");
-    var curve = dati.booking_curve || [];
-    if (curve.length === 0) {
-      contenitore.appendChild(creaEl("p", { "class": "dettaglio", testo: "Nessuna combinazione data/tipologia ha ancora almeno 2 rilevazioni: le curve appariranno qui non appena ci saranno piu' snapshot." }));
-      return;
-    }
-    curve.forEach(function (c) {
-      var card = creaEl("div", { "class": "curva-card" }, [
-        creaEl("div", { "class": "titolo", testo: formattaDataIt(c.data_target) + " - " + c.tipologia_nome + " (" + c.tipologia_codice + ")" }),
-        creaEl("div", { "class": "sottotitolo", testo: c.serie.length + " rilevazioni" }),
-      ]);
-      var involucroSvg = document.createElement("div");
-      involucroSvg.innerHTML = disegnaCurvaSVG(c.serie, 260, 120);
-      card.appendChild(involucroSvg.firstChild);
-      contenitore.appendChild(card);
+    $("#conta-curve").textContent=`${scelte.length} di ${curve.length}`;
+    if(!scelte.length){lc.append(el("div","vuoto","Nessuna curva per questo filtro."));return;}
+    scelte.forEach(c=>{
+      const box=el("div","curva");
+      box.append(el("h3",null,`${dataIT(c.data_target)} · ${c.tipologia_nome||c.tipologia_codice}`));
+      const ult=c.serie[c.serie.length-1];
+      box.append(el("div","meta",`${c.serie.length} rilevazioni · ultime libere ${ult.camere_libere}/${c.camere_totali??"?"}`));
+      box.insertAdjacentHTML("beforeend",svgCurva(c));
+      const piede=el("div","piede");
+      piede.append(el("span",null,dataIT(c.serie[0].data_rilevazione)),el("span",null,dataIT(ult.data_rilevazione)));
+      box.append(piede);
+      lc.append(box);
     });
   }
+  if(curve.length){aggiornaFiltri();disegnaCurve();}
+  else{$("#lista-curve").append(el("div","vuoto","Le curve compariranno con le prime rilevazioni del log."));$("#conta-curve").textContent="0";}
 
-  function renderSituazione(dati) {
-    var corpo = document.querySelector("#tabella-situazione tbody");
-    (dati.situazione || []).forEach(function (v) {
-      var riga = document.createElement("tr");
-      riga.appendChild(creaEl("td", { testo: formattaDataIt(v.data_target) }));
-      riga.appendChild(creaEl("td", { testo: v.tipologia_nome + " (" + v.tipologia_codice + ")" }));
-      riga.appendChild(creaEl("td", { testo: v.camere_libere + "/" + v.camere_totali }));
-      riga.appendChild(creaEl("td", { "class": classeDisponibilita(v.disponibilita_pct), testo: numeroOND(v.disponibilita_pct, 0, "%") }));
-      riga.appendChild(creaEl("td", { testo: v.prezzo_del_giorno === null ? "N/D" : numeroOND(v.prezzo_del_giorno, 0, " EUR") }));
-      corpo.appendChild(riga);
-    });
-  }
+  /* --- situazione --- */
+  const sit=(dati.situazione||[]).slice().sort((a,b)=>(a.data_target+a.tipologia_codice).localeCompare(b.data_target+b.tipologia_codice));
+  $("#conta-situazione").textContent=sit.length;
+  const tb=$("#tab-situazione tbody");
+  if(!sit.length){const tr=el("tr");const td=el("td",null,"Ancora nessuna rilevazione.");td.colSpan=5;tr.append(td);tb.append(tr);}
+  sit.slice(0,200).forEach(s=>{
+    const tr=el("tr",(s.disponibilita_pct!=null&&s.disponibilita_pct<=15)?"poca":null);
+    tr.append(el("td","num",dataIT(s.data_target)));
+    tr.append(el("td",null,s.tipologia_nome||s.tipologia_codice));
+    tr.append(el("td","num",`${s.camere_libere}/${s.camere_totali??"?"}`));
+    const tdD=el("td","disp"); const barra=el("div","barra"); const i=el("i");
+    i.style.width=Math.max(0,Math.min(100,100-(s.disponibilita_pct??0)))+"%";
+    barra.append(i); tdD.append(barra); tr.append(tdD);
+    tr.append(el("td","num",eur(s.prezzo_del_giorno)));
+    tb.append(tr);
+  });
 
-  // -------------------------------------------------------------------
-  // Griglia 2027: mini-calendario colorato per fascia
-  // -------------------------------------------------------------------
-
-  var COLORI_FASCIA = { A: "#1b5e20", B: "#43a047", C: "#f1c40f", D: "#e67e22" };
-  var NOMI_MESI_IT = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
-    "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"];
-  var GIORNI_SETTIMANA_IT = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"];
-
-  function renderGriglia2027(dati) {
-    var griglia = dati.griglia_2027 || { disponibile: false, nota: "", voci: [] };
-    document.getElementById("griglia-2027-nota").textContent = griglia.nota || "";
-
-    if (!griglia.disponibile || griglia.voci.length === 0) {
-      return;
-    }
-    document.getElementById("griglia-2027-legenda").style.display = "flex";
-
-    // raggruppa le voci per data
-    var perData = {};
-    griglia.voci.forEach(function (voce) {
-      if (!perData[voce.data]) { perData[voce.data] = []; }
-      perData[voce.data].push(voce);
-    });
-
-    // sceglie la tipologia "principale" da mostrare sulla cella: Classic
-    // se presente, altrimenti la prima in ordine alfabetico
-    function vocePrincipale(voci) {
-      var classic = voci.filter(function (v) { return v.tipologia.toLowerCase().indexOf("classic") !== -1; });
-      if (classic.length > 0) { return classic[0]; }
-      var ordinate = voci.slice().sort(function (a, b) { return a.tipologia.localeCompare(b.tipologia); });
-      return ordinate[0];
-    }
-
-    // raggruppa le date per mese (AAAA-MM)
-    var perMese = {};
-    Object.keys(perData).sort().forEach(function (dataIso) {
-      var meseChiave = dataIso.slice(0, 7);
-      if (!perMese[meseChiave]) { perMese[meseChiave] = []; }
-      perMese[meseChiave].push(dataIso);
-    });
-
-    var contenitoreMesi = document.getElementById("griglia-2027-mesi");
-    var pannelloDettaglio = document.getElementById("griglia-2027-dettaglio");
-
-    function mostraDettaglioGiorno(dataIso, voci) {
-      pannelloDettaglio.style.display = "block";
-      var righe = voci.slice().sort(function (a, b) { return a.tipologia.localeCompare(b.tipologia); }).map(function (v) {
-        return "<tr><td>" + v.tipologia + "</td><td>" + numeroOND(v.prezzo, 0, " EUR") + "</td><td>Fascia " + v.fascia + "</td></tr>";
-      }).join("");
-      pannelloDettaglio.innerHTML = "<strong>" + formattaDataIt(dataIso) + "</strong>" +
-        "<table><thead><tr><th>Tipologia</th><th>Prezzo</th><th>Fascia</th></tr></thead><tbody>" + righe + "</tbody></table>";
-    }
-
-    Object.keys(perMese).sort().forEach(function (meseChiave) {
-      var parti = meseChiave.split("-");
-      var anno = parseInt(parti[0], 10);
-      var mese = parseInt(parti[1], 10) - 1;
-      var nomeMese = NOMI_MESI_IT[mese] + " " + anno;
-
-      var card = creaEl("div", { "class": "mese-card" }, [
-        creaEl("div", { "class": "titolo-mese", testo: nomeMese }),
-      ]);
-
-      var intestazioneSettimana = creaEl("div", { "class": "giorni-settimana" });
-      GIORNI_SETTIMANA_IT.forEach(function (g) { intestazioneSettimana.appendChild(creaEl("div", { testo: g })); });
-      card.appendChild(intestazioneSettimana);
-
-      var primoGiorno = new Date(anno, mese, 1);
-      var giorniNelMese = new Date(anno, mese + 1, 0).getDate();
-      // Date.getDay(): 0=domenica..6=sabato; qui la settimana parte da lunedi
-      var offset = (primoGiorno.getDay() + 6) % 7;
-
-      var grigliaGiorni = creaEl("div", { "class": "giorni-mese" });
-      for (var i = 0; i < offset; i++) {
-        grigliaGiorni.appendChild(creaEl("div", { "class": "giorno-cella vuota" }));
+  /* --- griglia 2027: mini calendario --- */
+  const G=dati.griglia_2027||{};
+  const voci=G.voci||[];
+  if(!G.disponibile||!voci.length){
+    $("#nota-griglia").textContent=G.nota||"Griglia non ancora caricata.";
+    $("#calendari").append(el("div","vuoto","La griglia comparirà quando il file sarà nella cartella del progetto."));
+  }else{
+    const perGiorno={};
+    voci.forEach(v=>{const k=v.data||v.data_2027;(perGiorno[k]=perGiorno[k]||{}).fascia=v.fascia;
+      (perGiorno[k].prezzi=perGiorno[k].prezzi||[]).push(v);});
+    const giorniOrd=Object.keys(perGiorno).sort();
+    $("#conta-griglia").textContent=`${giorniOrd.length} notti`;
+    const mesi=[...new Set(giorniOrd.map(d=>d.slice(0,7)))];
+    const cal=$("#calendari");
+    mesi.forEach(m=>{
+      const [anno,mm]=m.split("-").map(Number);
+      const box=el("div","mese"); box.append(el("h3",null,`${MESI[mm-1]} ${anno}`));
+      const intest=el("div","settimana");
+      ["L","M","M","G","V","S","D"].forEach(g=>intest.append(el("div","gg",g)));
+      box.append(intest);
+      const primo=new Date(anno,mm-1,1), nGiorni=new Date(anno,mm,0).getDate();
+      let riga=el("div","settimana");
+      const vuoteIniziali=(primo.getDay()+6)%7;
+      for(let i=0;i<vuoteIniziali;i++) riga.append(el("div","cella fuori"));
+      for(let g=1;g<=nGiorni;g++){
+        const iso=`${anno}-${String(mm).padStart(2,"0")}-${String(g).padStart(2,"0")}`;
+        const info=perGiorno[iso];
+        let cella;
+        if(info){
+          cella=el("button","cella fascia-"+(info.fascia||"C"));
+          cella.append(el("span","n",g),el("span","p",
+            (info.prezzi.find(p=>(p.codice||p.tipologia_codice)==="CLA")||info.prezzi[0]).prezzo_eur));
+          cella.onclick=()=>apriDettaglio(iso,info);
+        }else{cella=el("div","cella fuori"); cella.append(el("span","n",g)); cella.style.color="var(--inchiostro-2)";}
+        riga.append(cella);
+        if(riga.children.length===7){box.append(riga);riga=el("div","settimana");}
       }
-      for (var giorno = 1; giorno <= giorniNelMese; giorno++) {
-        var dataIso = meseChiave + "-" + (giorno < 10 ? "0" + giorno : giorno);
-        var voci = perData[dataIso];
-        if (!voci) {
-          grigliaGiorni.appendChild(creaEl("div", { "class": "giorno-cella vuota" }, [creaEl("div", { "class": "num", testo: String(giorno) })]));
-          continue;
-        }
-        var principale = vocePrincipale(voci);
-        var colore = COLORI_FASCIA[principale.fascia] || "#8a94a1";
-        var cella = creaEl("button", {
-          "class": "giorno-cella", "type": "button",
-          "style": "background:" + colore,
-          "title": principale.tipologia + ": " + principale.prezzo + " EUR (fascia " + principale.fascia + ")",
-        }, [
-          creaEl("div", { "class": "num", testo: String(giorno) }),
-          creaEl("div", { "class": "prezzo", testo: numeroOND(principale.prezzo, 0) }),
-        ]);
-        cella.addEventListener("click", (function (d, v) { return function () { mostraDettaglioGiorno(d, v); }; })(dataIso, voci));
-        grigliaGiorni.appendChild(cella);
-      }
-      card.appendChild(grigliaGiorni);
-      contenitoreMesi.appendChild(card);
+      if(riga.children.length)box.append(riga);
+      cal.append(box);
     });
+    const leg=$("#legenda-griglia");
+    [["A","esaurita 2025 · aperta più alta"],["B","forte"],["C","sana"],["D","debole"]].forEach(([f,t])=>{
+      const s=el("span");const i=el("i");i.style.background=`var(--f${f})`;s.append(i,`${f} ${t}`);leg.append(s);});
   }
+  function apriDettaglio(iso,info){
+    $("#dettaglio-titolo").textContent=dataIT(iso)+" 2027 · fascia "+(info.fascia||"—");
+    const corpo=$("#dettaglio-corpo"); corpo.innerHTML="";
+    info.prezzi.slice().sort((a,b)=>a.prezzo_eur-b.prezzo_eur).forEach(p=>{
+      const tr=el("tr");tr.append(el("td",null,p.tipologia||p.codice),el("td","num",eur(p.prezzo_eur)));corpo.append(tr);});
+    $("#dettaglio").classList.add("aperto");
+  }
+  $("#chiudi-dettaglio").onclick=()=>$("#dettaglio").classList.remove("aperto");
+  document.addEventListener("keydown",e=>{if(e.key==="Escape")$("#dettaglio").classList.remove("aperto");});
 
-  // -------------------------------------------------------------------
-  // Decisioni recenti, con i livelli di motivazione espandibili
-  // -------------------------------------------------------------------
-
-  function renderDecisioni(dati) {
-    var contenitore = document.getElementById("lista-decisioni");
-    var decisioni = dati.decisioni || [];
-    if (decisioni.length === 0) {
-      contenitore.appendChild(creaEl("p", { "class": "dettaglio", testo: "Nessuna decisione registrata finora." }));
-      return;
+  /* --- decisioni: la ricetta del prezzo --- */
+  const dec=dati.decisioni||[];
+  $("#conta-decisioni").textContent=dec.length;
+  const ld=$("#lista-decisioni");
+  if(!dec.length) ld.append(el("div","vuoto","Nessuna decisione registrata."));
+  dec.forEach(d=>{
+    const det=el("details","dec");
+    const sum=el("summary");
+    sum.append(el("span","stato "+((d.esito||"")==="applicata"?"applicata":""),d.esito||"pending"));
+    sum.append(el("span","quando",dataIT(d.data_target)+(d.tipologia_nome?` · ${d.tipologia_nome}`:"")));
+    sum.append(el("span","titolo",d.suggerimento||d.tipo||""));
+    det.append(sum);
+    const corpo=el("div","corpo");
+    if(d.motivazione_sintesi) corpo.append(el("p","sintesi",d.motivazione_sintesi));
+    if((d.motivazione_livelli||[]).length){
+      const ol=el("ul","ricetta");
+      d.motivazione_livelli.forEach(l=>ol.append(el("li",null,String(l).replace(/^\d+\.\s*/,""))));
+      corpo.append(ol);
     }
-    decisioni.forEach(function (d) {
-      var badgeClasse = "badge-" + (d.esito || "pending");
-      var etichettaData = d.data_target ? formattaDataIt(d.data_target) : "";
-      var etichettaTipologia = d.tipologia_nome ? (" - " + d.tipologia_nome) : "";
+    det.append(corpo); ld.append(det);
+  });
 
-      var dettagliolivelli = "";
-      if (d.motivazione_livelli && d.motivazione_livelli.length > 0) {
-        dettagliolivelli = "<ul class='livelli-prezzo'>" + d.motivazione_livelli.map(function (l) {
-          return "<li>" + l + "</li>";
-        }).join("") + "</ul>";
-      }
+  $("#piede").textContent=`Contratto dati v${dati.schema_version||"?"} · generato da esporta_stato.py · la pagina legge solo dati.json, mai il database.`;
+}
 
-      var card = document.createElement("details");
-      card.className = "decisione-card";
-      card.innerHTML =
-        "<summary><span class='badge " + badgeClasse + "'>" + (d.esito || "pending").toUpperCase() + "</span>" +
-        "<strong>" + etichettaData + etichettaTipologia + "</strong>: " + d.suggerimento + "</summary>" +
-        dettagliolivelli +
-        "<div class='sintesi'>" + (d.motivazione_livelli && d.motivazione_livelli.length ? "Sintesi: " : "") + d.motivazione_sintesi + "</div>";
-      contenitore.appendChild(card);
-    });
-  }
-
-  function renderTutto(dati) {
-    renderIntestazione(dati);
-    renderKPI(dati);
-    renderBookingCurve(dati);
-    renderSituazione(dati);
-    renderGriglia2027(dati);
-    renderDecisioni(dati);
-    document.getElementById("contenuto-principale").style.display = "block";
-  }
-
-  function mostraErrore(messaggio) {
-    document.getElementById("errore-dettaglio").textContent = messaggio;
-    document.getElementById("errore-caricamento").style.display = "block";
-  }
-
-  // -------------------------------------------------------------------
-  // Punto di ingresso: usa i dati incorporati se presenti (pagina
-  // standalone), altrimenti li scarica da dati.json
-  // -------------------------------------------------------------------
-
-  if (window.DATI_INCORPORATI) {
-    renderTutto(window.DATI_INCORPORATI);
-  } else {
-    fetch("dati.json")
-      .then(function (risposta) {
-        if (!risposta.ok) { throw new Error("HTTP " + risposta.status); }
-        return risposta.json();
-      })
-      .then(renderTutto)
-      .catch(function (errore) { mostraErrore(String(errore)); });
-  }
-})();
+/* ============ avvio: dati incorporati oppure dati.json ============ */
+if(window.DATI){avvia(window.DATI);}
+else{
+  fetch("dati.json").then(r=>{if(!r.ok)throw new Error(r.status);return r.json();}).then(avvia)
+  .catch(()=>{const b=$("#errore-dati");b.className="banner allarme";
+    b.innerHTML="Impossibile leggere <b>dati.json</b>. Se hai aperto il file con doppio clic, usa la versione <b>dashboard_standalone.html</b> (dati incorporati) oppure avvia nella cartella: <b>python -m http.server</b> e apri <b>http://localhost:8000/dashboard/dashboard.html</b>.";});
+}
 </script>
-
 </body>
 </html>
