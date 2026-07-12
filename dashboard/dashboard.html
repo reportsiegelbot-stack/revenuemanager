@@ -1,4 +1,43 @@
 <!DOCTYPE html>
+<!--
+  MAPPA DEL FILE (leggi questo prima di modificare la pagina)
+  ==============================================================
+
+  (a) Colori e font si cambiano SOLO nei token dentro :root (inizio del
+      blocco <style>, poco piu' sotto: --carta, --inchiostro, --mare,
+      --fA/--fB/--fC/--fD per le fasce, --mono, --serif, --sans, ecc.).
+      Non scrivere mai un colore o un font "a mano" dentro una regola CSS
+      piu' in basso: si usa sempre var(--nome-token), cosi' un cambio di
+      palette si fa in un punto solo.
+
+  (b) Ogni sezione della pagina e' fatta di DUE pezzi che vanno sempre
+      insieme:
+        1. un blocco HTML dentro <main>, es. <section id="sez-curve">...
+        2. un blocco JS dentro <script>, marcato con un commento
+           "/* --- nome --- */" (es. "/* --- booking curve: piccole
+           multiple SVG --- */") che legge dati.DATI e riempie quel
+           blocco HTML.
+      Per aggiungere una nuova sezione si replicano ENTRAMBI i pezzi:
+      una nuova <section> in <main> con il suo <h2>, e una nuova funzione
+      JS commentata allo stesso modo, richiamata da avvia(dati). Aggiungere
+      solo l'uno o solo l'altro lascia la sezione vuota o il codice morto.
+
+  (c) TRE DIVIETI, sempre:
+        1. Mai modificare la riga del marcatore
+           "window.DATI = /*__DATI_INIZIO__*/ null /*__DATI_FINE__*/;":
+           e' li' che dashboard/esporta_stato.py inietta i dati per
+           generare dashboard_standalone.html. Cambiare anche solo uno
+           spazio in quella stringa fa fallire (di proposito) la
+           generazione della pagina autonoma.
+        2. Questa pagina non deve MAI leggere il database: legge solo
+           dati.json (o i dati incorporati dallo stesso JSON nella
+           versione standalone). Nessun accesso a vault.db, nessuna nuova
+           via per aggirare il contratto JSON.
+        3. Nessuna dipendenza esterna: niente CDN, niente librerie
+           esterne, niente font o icone scaricate da internet. Tutto il
+           CSS e il JS restano inline in questo file, cosi' la pagina
+           continua a funzionare offline con un doppio click.
+-->
 <html lang="it">
 <head>
 <meta charset="utf-8">
