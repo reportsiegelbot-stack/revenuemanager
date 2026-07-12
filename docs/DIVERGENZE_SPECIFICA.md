@@ -6,6 +6,16 @@ richiesto. Ogni voce riporta file e riga esatti nel codice cosi' com'e'
 oggi, cosa dice la specifica, e cosa fa davvero il codice. Le decisioni su
 cosa allineare (e quando) restano da prendere.
 
+**Aggiornamento 2026-07-12 (stesso giorno, dopo le correzioni mirate):**
+le voci R1, R2, R3, R4, R6, P5, C2, E1 sono state **risolte** con
+correzioni applicate una alla volta e verificate con `demo.py` dopo
+ciascuna (nessuna regressione). P2 e' stata **chiarita** in
+`docs/SPECIFICA_MOTORE.md` (v1.1), non nel codice. R7, R8, R9 restano
+**deferite** (nessun generatore di griglia annuale: fuori scope di questo
+giro). P6 resta **by design** (controllo informativo, non un difetto da
+correggere). Il dettaglio dello stato e' riportato in fondo a ciascuna
+voce sotto.
+
 Legenda gravita' uso personale in questo documento (non e' nella
 specifica, solo per aiutare a prioritizzare): 🔴 comportamento diverso da
 quanto promesso all'utente/RM, 🟡 gap di soglia/bordo, ⚪ funzionalita'
@@ -28,6 +38,9 @@ regola **non scatta**, mentre per la specifica dovrebbe scattare. I valori
 in `config.json` (`disponibilita_max_pct: 25`, `giorni_minimi: 14`,
 `aumento_pct: 10`) corrispondono esattamente alla specifica: diverge solo
 l'operatore di confronto, non le soglie.
+
+**Stato: ✅ risolto.** Operatori corretti in `<=`/`>=` in
+`report_mattina.py`, coerenti con la specifica.
 
 ---
 
@@ -63,6 +76,20 @@ Tre divergenze distinte in questo blocco:
    si preferiscono leve non-prezzo (min LOS, early-bird, condizioni per
    canale). Il testo attuale non riflette questa gerarchia.
 
+**Stato:**
+- Punto 1 (operatori `>`/`<`): **non toccato**, fuori dall'elenco delle
+  correzioni mirate di questo giro (solo R1/R3/R4 erano in scope per gli
+  operatori). Resta `>`/`<` in `report_mattina.py`.
+- Punto 2 (condizione `pickup <= 0`): **✅ risolto**. Rimossa: non era
+  una decisione presa, era un'aggiunta autonoma non prevista dalla
+  specifica. La regola ora si attiva solo su disponibilita'+giorni, come
+  da specifica.
+- Punto 3 (testo "ribasso di prezzo" alla pari): **✅ risolto**. Il
+  ribasso di listino non e' piu' proposto come opzione alla pari: il
+  testo ora propone "una promozione mirata (minimo soggiorno,
+  early-booking, condizioni per canale) - non un ribasso di listino", e
+  la motivazione chiarisce che il ribasso resta l'ultima opzione.
+
 ---
 
 ## R3 — chiusura_ota
@@ -75,6 +102,9 @@ if voce["disponibilita_pct"] < s["disponibilita_critica_pct"]:
 ```
 🟡 Stesso pattern di R1/R2: `<` invece di `≤`. Il valore config
 (`disponibilita_critica_pct: 10`) e' corretto, diverge solo l'operatore.
+
+**Stato: ✅ risolto.** Operatore corretto in `<=` in `report_mattina.py`,
+coerente con la specifica.
 
 ---
 
@@ -103,6 +133,12 @@ esaurite" riguarda il generatore della griglia annuale (R7, vedi sotto):
 **non esiste nel codice nessun generatore di griglia**, quindi questo
 +12% differenziato non e' implementato da nessuna parte (ne' giusto ne'
 sbagliato: assente).
+
+**Stato:**
+- Operatore `giorni_al_target > s["giorni_minimi"]`: **✅ risolto**,
+  ora `>=` in `report_mattina.py`.
+- Parte "griglia di apertura +12%": **⚪ deferita**, dipende da R7 (non
+  implementata), esplicitamente esclusa da questo giro di correzioni.
 
 ---
 
@@ -141,6 +177,17 @@ Due divergenze:
 Inoltre, la decision `opportunita_evento` (come `chiusura_ota`, vedi P2
 sotto) non ha una ricetta a 5 livelli.
 
+**Stato: ✅ risolto.** Nuova chiave `rules_thresholds.eventi.impatto_minimo_alert`
+in `config.json` (default 7). La query ora filtra `impact_score >= ?`
+usando questa soglia letta da config: un evento sotto soglia non genera
+piu' nessuna decision `opportunita_evento`. Verificato che il valore
+viene davvero letto da config (test con soglia alzata a 9: 0 decision
+generate sui due eventi demo, entrambi impatto 7-8). L'urgenza, non
+avendo piu' senso graduarla sotto una soglia minima unica, e' ora sempre
+"alta" per le decisioni che superano la soglia.
+(Nota sulla ricetta a 5 livelli mancante per `opportunita_evento`: vedi
+P2 sotto, chiarito come comportamento by-design, non un difetto.)
+
 ---
 
 ## R7 — griglia_apertura ⚪ NON IMPLEMENTATA
@@ -155,6 +202,9 @@ esclusivamente un **caricatore/visualizzatore** di un CSV gia' pronto
 fornito da fuori (`griglia_2027_tutte_tipologie.csv`): non applica
 nessuna delle regole di fascia della specifica, si limita a leggerlo e a
 passarlo alla dashboard cosi' com'e'.
+
+**Stato: ⚪ deferita.** Esplicitamente fuori scope in questo giro di
+correzioni (non tra i punti richiesti). Nessuna modifica.
 
 ---
 
@@ -174,6 +224,9 @@ data, non il corridoio min×0,95/max×1,15 del mese sorgente descritto da
 R8 (che si applicherebbe alla costruzione della griglia annuale, non ai
 suggerimenti giorno per giorno).
 
+**Stato: ⚪ deferita.** Esplicitamente fuori scope in questo giro di
+correzioni (non tra i punti richiesti). Nessuna modifica.
+
 ---
 
 ## R9 — differenziali_tipologie ⚪ NON IMPLEMENTATA
@@ -186,6 +239,9 @@ una fascia di prezzo **assoluta e indipendente** (es. `CLA: {bassa:
 [110,180], alta:[300,449]}`, `SUI: {bassa:[200,300], alta:[480,704]}`),
 non un rapporto rispetto a Classic. Non c'e' nel codice nessun calcolo di
 tipo "prezzo Classic × ratio".
+
+**Stato: ⚪ deferita.** Esplicitamente fuori scope in questo giro di
+correzioni (non tra i punti richiesti). Nessuna modifica.
 
 ---
 
@@ -223,6 +279,15 @@ indicato quando genera un'altra decision di prezzo. Segnalo l'ambiguita'
 oltre alla divergenza: e' una delle cose su cui serve una decisione
 esplicita.
 
+**Stato: 🔵 chiarito (non un bug del codice).** `docs/SPECIFICA_MOTORE.md`
+aggiornata a v1.1: P2 ora dichiara esplicitamente che la ricetta a 5
+livelli si applica solo alle decisioni che modificano un prezzo di
+griglia (`aumento_prezzo`, `unita_scarse_aumento`, `ribasso_promo`).
+`chiusura_ota` e `opportunita_evento` non toccano un prezzo di griglia e
+restano motivazioni testuali per design. Il codice non e' stato toccato:
+l'ambiguita' era nella specifica v1.0, non un difetto di
+`report_mattina.py`.
+
 ---
 
 ## P3 — Core agnostico dal settore
@@ -258,6 +323,15 @@ storico" (es. lo storico non arriva cosi' indietro). A differenza del
 pickup, qui non compare mai la dicitura "storico non disponibile": uno
 zero e' sempre mostrato come se fosse un dato reale.
 
+**Stato: ✅ risolto.** Nuova funzione `_storico_copre()` in
+`report_mattina.py` verifica se esiste storico di prenotazioni confermate
+prima/alla data di riferimento dell'anno precedente. Quando lo storico
+non copre quel periodo, la sezione (c) del report scrive esplicitamente
+"storico non disponibile" (e "N/D" nelle celle numeriche collegate)
+invece di uno zero indistinguibile da un dato reale. Verificato forzando
+l'assenza di storico e controllando che il testo compaia nel report
+generato.
+
 ---
 
 ## P6 — Checksum sui numeri trascritti
@@ -273,6 +347,10 @@ scarto, nessun elenco di "righe sospette", nessun flag che marchi i dati
 come "indicativi" quando il confronto fallisce. Il meccanismo di
 validazione attivo descritto dalla specifica non esiste: quello che c'e'
 oggi e' un aiuto per il controllo manuale, non un controllo automatico.
+
+**Stato: ⚪ by design, nessuna modifica.** Come da istruzione esplicita
+del task di correzione: P6 e' informativa per scelta, non un difetto da
+correggere in questo giro.
 
 ---
 
@@ -294,6 +372,15 @@ lavoro per R12, usa invece lo schema C2 completo a 9 colonne per il primo
 file — vedi il modulo stesso per il dettaglio della tolleranza sul
 secondo file.)
 
+**Stato: ✅ risolto.** `COLONNE_GRIGLIA_2027` e `_carica_griglia_2027()`
+in `dashboard/esporta_stato.py` leggono ora tutte e 9 le colonne dello
+schema C2, incluse `trattamento`, `unita_totali`, `unita_scarsa`.
+`schema_version` del contratto JSON portata a `1.2`
+(`docs/ARCHITETTURA_DASHBOARD.md` aggiornato). Il calendario in
+`dashboard.html` mostra un simbolo "●" sulle celle con `unita_scarsa=1`
+(con legenda dedicata), e il dettaglio-giorno mostra trattamento e
+unita' totali per ogni tipologia.
+
 ---
 
 ## E1 — Multi-struttura, niente Cetus hardcoded
@@ -311,6 +398,12 @@ Il tag `<title>` e' statico e non viene mai aggiornato da JavaScript
 dashboard per una struttura diversa da Cetus, il titolo mostrato nella
 scheda del browser resterebbe comunque "Cetus — Quadro del mattino".
 
+**Stato: ✅ risolto.** `avvia(dati)` in `dashboard.html` imposta ora
+`document.title` da `meta.nome_struttura` quando presente. Verificato
+generando lo standalone dai dati demo e leggendo il `<title>` renderizzato
+via Chromium headless: risulta "Hotel Cetus — Quadro del mattino" invece
+del valore statico.
+
 🟡 **`dashboard/dashboard.html:187`**:
 ```html
 <h1 id="nome-hotel">Hotel Cetus <span class="quadro">— quadro del mattino</span></h1>
@@ -321,6 +414,10 @@ nell'uso normale non e' visibile; resta pero' visibile per un istante
 prima che il JS giri, o in modo permanente se il caricamento dei dati
 fallisce (vedi il banner di errore) — in quel caso mostrerebbe "Hotel
 Cetus" anche per una struttura diversa.
+
+**Stato: non toccato.** Il punto E1 richiesto in questo giro riguardava
+solo `document.title` (vedi sopra); questo segnaposto nell'`<h1>` resta
+com'era, nessuna modifica.
 
 (`genera_demo.py` non e' incluso in questa voce: e' esplicitamente lo
 script di generazione dati demo *per Cetus*, il suo scopo dichiarato fin

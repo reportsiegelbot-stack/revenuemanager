@@ -56,15 +56,19 @@ from importa_log_disponibilita import (  # noqa: E402
     rileva_separatore,
 )
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 NOME_FILE_JSON_DEFAULT = "dati.json"
 NOME_FILE_STANDALONE_DEFAULT = "dashboard_standalone.html"
 NOME_TEMPLATE_HTML = "dashboard.html"
 NOME_GRIGLIA_2027_DEFAULT = "griglia_2027_tutte_tipologie.csv"
-# Colonne attese nel CSV della griglia 2027 (v1.1, allineate al template
-# dashboard.html "quadro del mattino"): "giorno" e' un'etichetta libera
+# Colonne attese nel CSV della griglia 2027 (v1.2): lo schema C2 completo di
+# docs/SPECIFICA_MOTORE.md (9 colonne). "giorno" e' un'etichetta libera
 # (es. il giorno della settimana) mostrata cosi' com'e', non validata.
-COLONNE_GRIGLIA_2027 = ["data", "giorno", "codice", "tipologia", "prezzo_eur", "fascia"]
+COLONNE_GRIGLIA_2027 = ["data", "giorno", "tipologia", "codice", "trattamento", "prezzo_eur", "fascia", "unita_totali", "unita_scarsa"]
+
+# Valori riconosciuti come "vero" per la colonna unita_scarsa (booleano
+# scritto a mano in un CSV: puo' essere si/no, 1/0, true/false...).
+_VALORI_VERO = {"1", "si", "sì", "true", "vero", "yes", "x"}
 
 # Il template dashboard.html incorpora i dati sostituendo ESATTAMENTE questa
 # stringa (marcatore vuoto) con /*__DATI_INIZIO__*/ <json> /*__DATI_FINE__*/.
@@ -210,17 +214,32 @@ def _carica_griglia_2027(percorso):
         except ValueError:
             scartate += 1
             continue
-        # "giorno" e' solo un'etichetta descrittiva (es. giorno della
-        # settimana): non e' obbligatoria riga per riga, una cella vuota
-        # non fa scartare la voce.
+        # "giorno", "trattamento", "unita_totali", "unita_scarsa" sono
+        # descrittivi: una cella vuota non fa scartare la voce (a
+        # differenza di data/prezzo/fascia/codice/tipologia, che sono i
+        # campi minimi senza cui la riga non avrebbe senso).
         giorno = (riga.get("giorno") or "").strip()
+        trattamento = (riga.get("trattamento") or "").strip() or None
+
+        testo_unita_totali = (riga.get("unita_totali") or "").strip()
+        try:
+            unita_totali = int(parse_numero_flessibile(testo_unita_totali)) if testo_unita_totali else None
+        except ValueError:
+            unita_totali = None
+
+        testo_unita_scarsa = (riga.get("unita_scarsa") or "").strip().lower()
+        unita_scarsa = (testo_unita_scarsa in _VALORI_VERO) if testo_unita_scarsa else False
+
         voci.append({
             "data": formatta_data(data_riga),
             "giorno": giorno,
             "codice": codice,
             "tipologia": tipologia,
+            "trattamento": trattamento,
             "prezzo_eur": prezzo,
             "fascia": fascia,
+            "unita_totali": unita_totali,
+            "unita_scarsa": unita_scarsa,
         })
 
     nota = f"{len(voci)} voci caricate da '{percorso}'."

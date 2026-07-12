@@ -133,20 +133,23 @@ td.disp{white-space:nowrap}
 .mese h3{margin:0 0 8px;font:400 16px var(--serif);text-align:center}
 .settimana{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:3px}
 .gg{font:10px var(--mono);color:var(--inchiostro-2);text-align:center}
-.cella{aspect-ratio:1;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+.cella{position:relative;aspect-ratio:1;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;
   font:10px var(--mono);color:#fff;cursor:pointer;border:none;padding:0}
 .cella:focus-visible{outline:2px solid var(--inchiostro);outline-offset:1px}
 .cella .n{font-size:9px;opacity:.85}.cella .p{font-weight:700;font-size:10.5px}
 .cella.fuori{background:none;cursor:default}
+.cella .simbolo-scarsa{position:absolute;top:2px;right:3px;font-size:7px;line-height:1;color:#fff;text-shadow:0 0 2px rgba(0,0,0,.6)}
 .fascia-A{background:var(--fA)}.fascia-B{background:var(--fB)}
 .fascia-C{background:var(--fC);color:#4A3708}.fascia-D{background:var(--fD)}
 .legenda{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;margin:12px 0 0;color:var(--inchiostro-2)}
 .legenda i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-1px;margin-right:5px}
-.dettaglio-giorno{position:fixed;inset:auto 16px 16px auto;max-width:300px;background:var(--inchiostro);color:#EDE9DC;
+.legenda .simbolo-scarsa{color:var(--inchiostro);text-shadow:none}
+.dettaglio-giorno{position:fixed;inset:auto 16px 16px auto;max-width:320px;background:var(--inchiostro);color:#EDE9DC;
   border-radius:var(--raggio);padding:14px 16px;box-shadow:0 8px 30px rgba(20,51,61,.35);display:none;z-index:50}
 .dettaglio-giorno.aperto{display:block}
 .dettaglio-giorno h4{margin:0 0 8px;font:400 16px var(--serif)}
 .dettaglio-giorno table{min-width:0;font-size:13px;color:#EDE9DC}
+.dettaglio-giorno th{text-align:left;font:600 10px var(--sans);text-transform:uppercase;letter-spacing:.4px;color:#B9C7CB;padding:2px 10px 4px 0}
 .dettaglio-giorno td{border:none;padding:2px 10px 2px 0}
 .dettaglio-giorno .chiudi{position:absolute;top:8px;right:10px;background:none;border:none;color:#B9C7CB;font-size:16px;cursor:pointer}
 
@@ -259,6 +262,7 @@ function avvia(dati){
   const meta=dati.meta||{};
   /* --- testata --- */
   if(meta.nome_struttura) $("#nome-hotel").firstChild.textContent=meta.nome_struttura.split(" - ")[0]+" ";
+  if(meta.nome_struttura) document.title=`${meta.nome_struttura.split(" - ")[0]} — Quadro del mattino`;
   const gen=meta.generato_il?new Date(meta.generato_il):null;
   $("#sottotitolo").textContent=(meta.nome_struttura||"")+(gen?` · aggiornato ${gen.toLocaleString("it-IT",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})}`:"");
   const pill=$("#pillole");
@@ -404,9 +408,11 @@ function avvia(dati){
         const info=perGiorno[iso];
         let cella;
         if(info){
-          cella=el("button","cella fascia-"+(info.fascia||"C"));
-          cella.append(el("span","n",g),el("span","p",
-            (info.prezzi.find(p=>(p.codice||p.tipologia_codice)==="CLA")||info.prezzi[0]).prezzo_eur));
+          const principale=info.prezzi.find(p=>(p.codice||p.tipologia_codice)==="CLA")||info.prezzi[0];
+          cella=el("button","cella fascia-"+(info.fascia||"C")+(principale.unita_scarsa?" scarsa":""));
+          cella.append(el("span","n",g),el("span","p",principale.prezzo_eur));
+          if(principale.unita_scarsa) cella.append(el("span","simbolo-scarsa","●"));
+          cella.title=principale.unita_scarsa?"Unita' scarsa":"";
           cella.onclick=()=>apriDettaglio(iso,info);
         }else{cella=el("div","cella fuori"); cella.append(el("span","n",g)); cella.style.color="var(--inchiostro-2)";}
         riga.append(cella);
@@ -418,12 +424,23 @@ function avvia(dati){
     const leg=$("#legenda-griglia");
     [["A","esaurita 2025 · aperta più alta"],["B","forte"],["C","sana"],["D","debole"]].forEach(([f,t])=>{
       const s=el("span");const i=el("i");i.style.background=`var(--f${f})`;s.append(i,`${f} ${t}`);leg.append(s);});
+    leg.append(el("span",null,"● Classic = unità scarsa (tocca il giorno per il dettaglio)"));
   }
   function apriDettaglio(iso,info){
     $("#dettaglio-titolo").textContent=dataIT(iso)+" 2027 · fascia "+(info.fascia||"—");
     const corpo=$("#dettaglio-corpo"); corpo.innerHTML="";
+    const intestazione=el("tr",null);
+    ["Tipologia","Prezzo","Trattamento","Unita'"].forEach(t=>intestazione.append(el("th",null,t)));
+    corpo.append(intestazione);
     info.prezzi.slice().sort((a,b)=>a.prezzo_eur-b.prezzo_eur).forEach(p=>{
-      const tr=el("tr");tr.append(el("td",null,p.tipologia||p.codice),el("td","num",eur(p.prezzo_eur)));corpo.append(tr);});
+      const tr=el("tr");
+      const nomeTipologia=(p.tipologia||p.codice||"")+(p.unita_scarsa?" ●":"");
+      tr.append(el("td",null,nomeTipologia));
+      tr.append(el("td","num",eur(p.prezzo_eur)));
+      tr.append(el("td",null,p.trattamento||"—"));
+      tr.append(el("td","num",p.unita_totali!=null?String(p.unita_totali):"—"));
+      corpo.append(tr);
+    });
     $("#dettaglio").classList.add("aperto");
   }
   $("#chiudi-dettaglio").onclick=()=>$("#dettaglio").classList.remove("aperto");

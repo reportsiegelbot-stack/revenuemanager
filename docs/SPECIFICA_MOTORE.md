@@ -1,5 +1,5 @@
 # SPECIFICA MOTORE DECISIONALE — Revenue Cetus / piattaforma
-Versione specifica: 1.0 — 12/07/2026
+Versione specifica: 1.1 — 12/07/2026 (v1.1: chiarito ambito di P2, vedi nota)
 Questo documento è la FONTE DI VERITÀ delle regole del motore. Ogni modifica al
 comportamento passa da qui: lesson → aggiornamento specifica (nuova versione) →
 config.json → codice. Nessuna regola vive solo nel codice.
@@ -11,6 +11,11 @@ P2. Spiegabilità: ogni suggerimento di prezzo espone la motivazione in 5 livell
     etichettati (L1 prezzo base griglia → L2 fattore occupazione/pickup →
     L3 giorno-settimana/eventi → L4 regola unità scarse → L5 limiti min/max)
     più una riga di sintesi. Un suggerimento senza ricetta è un bug.
+    Ambito (v1.1): la ricetta a 5 livelli si applica SOLO alle decisioni che
+    modificano un prezzo (aumento_prezzo, unita_scarse_aumento, ribasso_promo).
+    chiusura_ota e opportunita_evento non toccano un prezzo di griglia: restano
+    motivazioni testuali per design, non ricetta a 5 livelli. In v1.0 questo non
+    era esplicito: non era un bug del codice, era un'ambiguità della specifica.
 P3. Core agnostico dal settore: il motore ragiona su capacity_unit, snapshot,
     decision; "camera", "hotel", "retta" esistono solo in config e interfaccia.
 P4. Solo stdlib Python; nessuna dipendenza esterna senza decisione esplicita.

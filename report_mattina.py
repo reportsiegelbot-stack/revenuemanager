@@ -265,6 +265,20 @@ def _statistiche_periodo(conn, data_inizio, data_fine, capacity_unit_id=None, cr
     }
 
 
+def _storico_copre(conn, data_riferimento):
+    """Vero se esistono prenotazioni confermate create prima o alla data
+    indicata. Serve a distinguere "quel periodo ha avuto zero
+    prenotazioni" (dato reale) da "il sistema non aveva ancora storico a
+    quella data" (dato assente): senza questo controllo un periodo mai
+    tracciato mostrerebbe uno zero indistinguibile da uno zero vero,
+    contro il principio di onesta' sui dati (P5 di docs/SPECIFICA_MOTORE.md)."""
+    riga = conn.execute("SELECT MIN(created_date) AS prima FROM booking WHERE status = 'confirmed'").fetchone()
+    prima_data = riga["prima"]
+    if prima_data is None:
+        return False
+    return prima_data <= formatta_data(data_riferimento)
+
+
 def confronto_anno_precedente(conn, capacity_units, oggi_data, orizzonte_giorni):
     """Confronta il periodo corrente con lo stesso periodo di un anno fa,
     usando pero' lo stesso punto della "curva di prenotazione": per l'anno
@@ -297,6 +311,11 @@ def confronto_anno_precedente(conn, capacity_units, oggi_data, orizzonte_giorni)
         "totale_corrente": totale_corrente,
         "totale_precedente": totale_precedente,
         "per_unita": per_unita,
+        # False = il sistema non aveva ancora nessuna prenotazione
+        # registrata alla data di inizio del periodo di confronto
+        # dell'anno scorso: i valori "precedente" non vanno letti come
+        # "zero prenotazioni", ma come "storico non disponibile".
+        "storico_precedente_disponibile": _storico_copre(conn, inizio_anno_scorso),
     }
 
 
@@ -420,11 +439,12 @@ def costruisci_livelli_prezzo(conn, config, voce, tipo_regola, tipologia_scarsa,
             f"con {voce['giorni_al_target']} giorni di anticipo → propone +{aumento_pct}%"
         )
     elif tipo_regola == "ribasso_promo":
+        pickup_testo = f"{voce['pickup']:+d} unita'" if voce.get("pickup") is not None else "N/D"
         livelli.append(
-            f"2. Fattore pickup: pickup ultimi {PICKUP_GIORNI} giorni fermo ({voce['pickup']:+d} unita'), "
-            f"disponibilita' al {voce['disponibilita_pct']:.0f}% a {voce['giorni_al_target']} giorni dalla data "
-            "→ propone un'azione promozionale (percentuale non parametrizzata in config.json, "
-            "da valutare manualmente)"
+            f"2. Fattore occupazione: disponibilita' al {voce['disponibilita_pct']:.0f}% a "
+            f"{voce['giorni_al_target']} giorni dalla data (pickup ultimi {PICKUP_GIORNI} giorni: {pickup_testo}) "
+            "→ propone una leva non di prezzo (promozione mirata): il ribasso di listino resta l'ultima opzione, "
+            "percentuale non parametrizzata in config.json, da valutare manualmente"
         )
 
     # --- Livello 3: aggiustamento giorno-settimana/evento -------------------
@@ -532,7 +552,7 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
             # poche unita' in assoluto (ma almeno una: a disponibilita' 0
             # non c'e' nulla da vendere) e manca abbastanza tempo, vale la
             # pena provare a venderle a un prezzo piu' alto.
-            if 0 < voce["disponibili"] <= soglia_unita_assolute_scarse and voce["giorni_al_target"] > s["giorni_minimi"]:
+            if 0 < voce["disponibili"] <= soglia_unita_assolute_scarse and voce["giorni_al_target"] >= s["giorni_minimi"]:
                 urgenza = "alta"
                 testo = f"Aumentare il prezzo del {s['aumento_pct']}%"
                 verbo = "resta" if voce["disponibili"] == 1 else "restano"
@@ -549,8 +569,8 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
                 registra_decisione(conn, oggi_data, voce, "unita_scarse_aumento", testo, motivo, urgenza, dati_extra={"livelli": livelli})
         elif (
             voce["disponibili"] > 0
-            and voce["disponibilita_pct"] < s["disponibilita_max_pct"]
-            and voce["giorni_al_target"] > s["giorni_minimi"]
+            and voce["disponibilita_pct"] <= s["disponibilita_max_pct"]
+            and voce["giorni_al_target"] >= s["giorni_minimi"]
         ):
             urgenza = "alta" if voce["disponibilita_pct"] < s["disponibilita_max_pct"] / 2 else "media"
             testo = f"Aumentare il prezzo del {s['aumento_pct']}%"
@@ -568,18 +588,20 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
 
         s = soglie["ribasso_o_promo"]
         if (
-            voce["pickup"] is not None
-            and voce["pickup"] <= 0
-            and voce["disponibilita_pct"] > s["disponibilita_min_pct"]
+            voce["disponibilita_pct"] > s["disponibilita_min_pct"]
             and 0 <= voce["giorni_al_target"] < s["giorni_massimi"]
         ):
             urgenza = "alta" if voce["giorni_al_target"] <= 3 else "media"
-            testo = "Valutare un ribasso di prezzo o una promozione mirata"
+            # Il taglio del prezzo di listino resta l'ULTIMA scelta (vedi
+            # docs/SPECIFICA_MOTORE.md, R2): si propongono prima leve non di
+            # prezzo (minimo soggiorno, early-booking, condizioni dedicate
+            # su un canale), che difendono il valore invece di svenderlo.
+            testo = "Valutare una promozione mirata (minimo soggiorno, early-booking, condizioni per canale) - non un ribasso di listino"
             motivo = (
-                f"Per {voce['unita_name']} il {formatta_data_estesa(voce['data'])} il pickup degli ultimi "
-                f"{PICKUP_GIORNI} giorni e' fermo (variazione: {voce['pickup']} unita'), con disponibilita' "
-                f"ancora al {voce['disponibilita_pct']:.0f}% e solo {voce['giorni_al_target']} giorni alla data: "
-                "rischio concreto di rimanere con invenduto."
+                f"Per {voce['unita_name']} il {formatta_data_estesa(voce['data'])} la disponibilita' e' "
+                f"ancora al {voce['disponibilita_pct']:.0f}% a {voce['giorni_al_target']} giorni dalla data: "
+                "meglio difendere il valore con una leva non di prezzo prima di considerare un ribasso "
+                "del prezzo di listino, che resta l'ultima opzione."
             )
             livelli = costruisci_livelli_prezzo(
                 conn, config, voce, "ribasso_promo", tipologia_scarsa, soglia_totale_unita_scarse, s.get("aumento_pct")
@@ -588,7 +610,7 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
             registra_decisione(conn, oggi_data, voce, "ribasso_promo", testo, motivo, urgenza, dati_extra={"livelli": livelli})
 
         s = soglie["chiusura_ota"]
-        if voce["disponibilita_pct"] < s["disponibilita_critica_pct"]:
+        if voce["disponibilita_pct"] <= s["disponibilita_critica_pct"]:
             urgenza = "alta"
             testo = "Chiudere i canali OTA e vendere solo sul canale diretto"
             motivo = (
@@ -599,22 +621,31 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
             suggerimenti.append({"voce": voce, "tipo": "chiusura_ota", "azione": testo, "motivo": motivo, "urgenza": urgenza})
             registra_decisione(conn, oggi_data, voce, "chiusura_ota", testo, motivo, urgenza)
 
+    # R6: solo eventi con impatto ALTO generano un suggerimento (non
+    # qualunque impact_score positivo); la soglia e' in config.json, non
+    # scritta nel codice (docs/SPECIFICA_MOTORE.md, R6 e principio P4).
+    soglia_eventi = soglie.get("eventi", {})
+    impatto_minimo_alert = soglia_eventi.get("impatto_minimo_alert", 7)
+
     oggi_str = formatta_data(oggi_data)
     fine_str = formatta_data(oggi_data + timedelta(days=orizzonte_giorni - 1))
     segnali = conn.execute(
         """
         SELECT signal_date, signal_type, description, impact_score
         FROM external_signal
-        WHERE signal_date BETWEEN ? AND ? AND impact_score > 0
+        WHERE signal_date BETWEEN ? AND ? AND impact_score >= ?
         ORDER BY signal_date
         """,
-        (oggi_str, fine_str),
+        (oggi_str, fine_str, impatto_minimo_alert),
     ).fetchall()
 
     for segnale in segnali:
         data_segnale = datetime.strptime(segnale["signal_date"], "%Y-%m-%d").date()
         impatto = segnale["impact_score"]
-        urgenza = "alta" if impatto >= 8 else "media" if impatto >= 5 else "bassa"
+        # Solo eventi ad alto impatto arrivano qui (filtrati dalla query
+        # sopra): l'urgenza e' quindi sempre "alta", non serve un'altra
+        # soglia interna per distinguere i casi.
+        urgenza = "alta"
         testo = "Opportunita' da evento: valutare aumento prezzi / riduzione disponibilita' su canali scontati"
         motivo = (
             f"Il {formatta_data_estesa(data_segnale)} e' segnalato '{segnale['description']}' "
@@ -781,10 +812,28 @@ def costruisci_html(config, oggi_data, situazione, pickup_dettagliato, confronto
 
     # --- sezione c: confronto anno precedente ------------------------------
     tc, tp = confronto["totale_corrente"], confronto["totale_precedente"]
-    var_prenotazioni = variazione_pct(tc["n_prenotazioni"], tp["n_prenotazioni"])
-    var_notti = variazione_pct(tc["notti"], tp["notti"])
-    var_ricavo = variazione_pct(tc["ricavo"], tp["ricavo"])
-    var_prezzo = variazione_pct(tc["prezzo_medio_notte"] or 0, tp["prezzo_medio_notte"] or 0)
+    # P5 (onesta' sui dati): se il sistema non aveva ancora storico alla
+    # data di inizio del periodo di confronto, i valori "anno precedente"
+    # NON sono uno zero reale ma un dato assente: vanno dichiarati
+    # esplicitamente "storico non disponibile", mai mostrati come se
+    # fossero zero prenotazioni.
+    storico_disponibile = confronto.get("storico_precedente_disponibile", True)
+    if storico_disponibile:
+        var_prenotazioni = variazione_pct(tc["n_prenotazioni"], tp["n_prenotazioni"])
+        var_notti = variazione_pct(tc["notti"], tp["notti"])
+        var_ricavo = variazione_pct(tc["ricavo"], tp["ricavo"])
+        var_prezzo = variazione_pct(tc["prezzo_medio_notte"] or 0, tp["prezzo_medio_notte"] or 0)
+        tp_n_testo = str(tp["n_prenotazioni"])
+        tp_notti_testo = str(tp["notti"])
+        tp_ricavo_testo = _num(tp["ricavo"], 0, " EUR")
+        tp_prezzo_testo = _num(tp["prezzo_medio_notte"], 0, " EUR")
+        var_prenotazioni_testo = _num(var_prenotazioni, 1, "%")
+        var_notti_testo = _num(var_notti, 1, "%")
+        var_ricavo_testo = _num(var_ricavo, 1, "%")
+        var_prezzo_testo = _num(var_prezzo, 1, "%")
+    else:
+        tp_n_testo = tp_notti_testo = tp_ricavo_testo = tp_prezzo_testo = "storico non disponibile"
+        var_prenotazioni_testo = var_notti_testo = var_ricavo_testo = var_prezzo_testo = "N/D"
 
     inizio_c, fine_c = confronto["periodo_corrente"]
     inizio_p, fine_p = confronto["periodo_precedente"]
@@ -792,12 +841,16 @@ def costruisci_html(config, oggi_data, situazione, pickup_dettagliato, confronto
     righe_unita_confronto = ""
     for voce in confronto["per_unita"]:
         u, c, p = voce["unita"], voce["corrente"], voce["precedente"]
+        if storico_disponibile:
+            p_n_testo, p_notti_testo, p_ricavo_testo = str(p["n_prenotazioni"]), str(p["notti"]), _num(p["ricavo"], 0, " EUR")
+        else:
+            p_n_testo = p_notti_testo = p_ricavo_testo = "storico non disponibile"
         righe_unita_confronto += (
             "<tr>"
             f"<td>{html.escape(u['name'])} ({html.escape(u['code'])})</td>"
-            f"<td>{c['n_prenotazioni']}</td><td>{p['n_prenotazioni']}</td>"
-            f"<td>{c['notti']}</td><td>{p['notti']}</td>"
-            f"<td>{_num(c['ricavo'], 0, ' EUR')}</td><td>{_num(p['ricavo'], 0, ' EUR')}</td>"
+            f"<td>{c['n_prenotazioni']}</td><td>{p_n_testo}</td>"
+            f"<td>{c['notti']}</td><td>{p_notti_testo}</td>"
+            f"<td>{_num(c['ricavo'], 0, ' EUR')}</td><td>{p_ricavo_testo}</td>"
             "</tr>\n"
         )
 
@@ -930,10 +983,10 @@ def costruisci_html(config, oggi_data, situazione, pickup_dettagliato, confronto
   </p>
   <table>
     <tr><th></th><th>Anno corrente</th><th>Anno precedente</th><th>Variazione</th></tr>
-    <tr><td>Prenotazioni confermate</td><td>{tc['n_prenotazioni']}</td><td>{tp['n_prenotazioni']}</td><td>{_num(var_prenotazioni, 1, '%')}</td></tr>
-    <tr><td>Notti vendute</td><td>{tc['notti']}</td><td>{tp['notti']}</td><td>{_num(var_notti, 1, '%')}</td></tr>
-    <tr><td>Ricavo totale</td><td>{_num(tc['ricavo'], 0, ' EUR')}</td><td>{_num(tp['ricavo'], 0, ' EUR')}</td><td>{_num(var_ricavo, 1, '%')}</td></tr>
-    <tr><td>Prezzo medio a notte</td><td>{_num(tc['prezzo_medio_notte'], 0, ' EUR')}</td><td>{_num(tp['prezzo_medio_notte'], 0, ' EUR')}</td><td>{_num(var_prezzo, 1, '%')}</td></tr>
+    <tr><td>Prenotazioni confermate</td><td>{tc['n_prenotazioni']}</td><td>{tp_n_testo}</td><td>{var_prenotazioni_testo}</td></tr>
+    <tr><td>Notti vendute</td><td>{tc['notti']}</td><td>{tp_notti_testo}</td><td>{var_notti_testo}</td></tr>
+    <tr><td>Ricavo totale</td><td>{_num(tc['ricavo'], 0, ' EUR')}</td><td>{tp_ricavo_testo}</td><td>{var_ricavo_testo}</td></tr>
+    <tr><td>Prezzo medio a notte</td><td>{_num(tc['prezzo_medio_notte'], 0, ' EUR')}</td><td>{tp_prezzo_testo}</td><td>{var_prezzo_testo}</td></tr>
   </table>
   <table>
     <tr><th>Tipologia</th><th>Prenotazioni (corrente)</th><th>Prenotazioni (anno prec.)</th><th>Notti (corrente)</th><th>Notti (anno prec.)</th><th>Ricavo (corrente)</th><th>Ricavo (anno prec.)</th></tr>

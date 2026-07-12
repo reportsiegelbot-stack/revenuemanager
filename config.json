@@ -29,6 +29,7 @@
     "aumento_prezzo":  { "disponibilita_max_pct": 25, "giorni_minimi": 14, "aumento_pct": 10 },
     "ribasso_o_promo": { "disponibilita_min_pct": 50, "giorni_massimi": 10 },
     "chiusura_ota":    { "disponibilita_critica_pct": 10 },
-    "unita_scarse":    { "soglia_unita_assolute": 1, "soglia_totale_unita": 3, "nota": "per tipologie con <=3 unita' (SUP, PRE, JSU, SUI, DEP) ragionare in unita' residue, non in percentuale" }
+    "unita_scarse":    { "soglia_unita_assolute": 1, "soglia_totale_unita": 3, "nota": "per tipologie con <=3 unita' (SUP, PRE, JSU, SUI, DEP) ragionare in unita' residue, non in percentuale" },
+    "eventi":          { "impatto_minimo_alert": 7, "nota": "sotto questa soglia di impact_score (1-10) un evento non genera una decision opportunita_evento" }
   }
 }

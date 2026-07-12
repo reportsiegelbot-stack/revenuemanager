@@ -91,7 +91,7 @@ l'ultimo valore) o il calcolo del prossimo cambio di stagione tariffaria.
 File: `dashboard/dati.json`. Oggetto radice con questi campi:
 
 ### `schema_version` (stringa)
-Attualmente `"1.1"`. Va incrementata (parte intera per cambi incompatibili,
+Attualmente `"1.2"`. Va incrementata (parte intera per cambi incompatibili,
 es. rinominare un campo; si puo' usare la parte decimale per aggiunte
 retrocompatibili) ogni volta che la struttura del JSON cambia in un modo
 che un consumer esistente potrebbe non aspettarsi.
@@ -102,6 +102,12 @@ che un consumer esistente potrebbe non aspettarsi.
   template `dashboard.html` "quadro del mattino" (`prezzo` -> `prezzo_eur`,
   aggiunti `codice` e `giorno`): vedi sezione `griglia_2027` piu' sotto.
   Nessun altro campo del contratto e' cambiato.
+- `1.2` — `griglia_2027.voci` legge ora tutte le 9 colonne dello schema C2
+  di `docs/SPECIFICA_MOTORE.md` (aggiunti `trattamento`, `unita_totali`,
+  `unita_scarsa`; prima ne mancavano 3 su 9, vedi
+  `docs/DIVERGENZE_SPECIFICA.md`). La dashboard mostra un indicatore visivo
+  nel calendario quando `unita_scarsa` e' vero, e trattamento/unita' totali
+  nel dettaglio del giorno.
 
 ### `meta` (oggetto)
 | Campo | Tipo | Significato |
@@ -151,13 +157,20 @@ cosi' com'e', un punto per elemento della serie.
 |---|---|---|
 | `disponibile` | booleano | `false` se il file `griglia_2027_tutte_tipologie.csv` non e' stato trovato (o non e' valido) nella root del progetto. |
 | `nota` | stringa | Messaggio leggibile: quante voci caricate, quante scartate, o perche' la sezione e' vuota. |
-| `voci` | lista | Ogni voce: `{data, giorno, codice, tipologia, prezzo_eur, fascia}` (dalla v1.1; nella v1.0 erano `{data, tipologia, prezzo, fascia}`). |
+| `voci` | lista | Schema C2 completo (9 colonne, dalla v1.2): `{data, giorno, codice, tipologia, trattamento, prezzo_eur, fascia, unita_totali, unita_scarsa}`. |
 
 Campi di ogni voce: `data` (ISO `YYYY-MM-DD`), `giorno` (etichetta libera,
 es. il giorno della settimana — puramente descrittiva, non validata),
 `codice` (codice tipologia, es. `CLA`, sempre maiuscolo), `tipologia`
-(nome per esteso, es. `Classic`), `prezzo_eur` (numero), `fascia` (lettera,
-tipicamente A-D, usata dall'interfaccia per colorare il calendario).
+(nome per esteso, es. `Classic`), `trattamento` (stringa o `null`, es.
+`BB`), `prezzo_eur` (numero), `fascia` (lettera, tipicamente A-D, usata
+dall'interfaccia per colorare il calendario), `unita_totali` (intero o
+`null`), `unita_scarsa` (booleano: se vero, la dashboard mostra un
+indicatore "●" nella cella del calendario).
+
+Cronologia dei campi: v1.0 `{data, tipologia, prezzo, fascia}` -> v1.1
+rinominati/aggiunti `{data, giorno, codice, tipologia, prezzo_eur, fascia}`
+-> v1.2 schema C2 completo (9 campi, questa versione).
 
 Non e' un dato del database: e' un file CSV esterno opzionale, pensato per
 la griglia tariffaria dell'anno successivo definita a tavolino (non
