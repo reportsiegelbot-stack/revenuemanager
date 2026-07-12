@@ -8,14 +8,27 @@ in pochi minuti da chi si occupa dei prezzi e della disponibilita'.
 
 Contiene:
   a) la situazione dei prossimi 30 giorni (disponibilita', prezzo, pickup)
-  b) il confronto con lo stesso periodo dell'anno precedente (allineato
+  b) PICKUP dettagliato: per ogni data con almeno 2 rilevazioni in
+     inventory_snapshot (comprese quelle importate a mano col log
+     disponibilita', vedi importa_log_disponibilita.py), la variazione tra
+     l'ultima rilevazione e la precedente e quella di ~7 giorni prima, piu'
+     il confronto con l'anno scorso fatto SEMPRE "on the books contro on
+     the books" allo stesso numero di giorni-prima-dell'arrivo (mai contro
+     l'occupazione finale consuntiva, che sarebbe un confronto scorretto):
+     se il dato storico a quel punto della curva non esiste, lo dice
+     esplicitamente invece di indovinare.
+  c) il confronto con lo stesso periodo dell'anno precedente (allineato
      al giorno della settimana: -364 giorni, non -365, cosi' un sabato
      viene sempre confrontato con un sabato)
-  c) le date "anomale" da controllare
-  d) suggerimenti generati da un motore a regole parametriche (le soglie
+  d) le date "anomale" da controllare
+  e) suggerimenti generati da un motore a regole parametriche (le soglie
      sono tutte lette da config.json, non ce n'e' nessuna scritta nel
-     codice), ognuno salvato anche nella tabella "decision"
-  e) il "playbook" del revenue manager: come si e' comportato in passato
+     codice), ognuno salvato anche nella tabella "decision". Per i
+     suggerimenti di prezzo la motivazione e' scomposta in livelli
+     espliciti (prezzo base da griglia, fattore occupazione/pickup,
+     aggiustamento giorno-settimana/evento, regola unita' scarse, limiti
+     min/max), con una sintesi finale in linguaggio semplice.
+  f) il "playbook" del revenue manager: come si e' comportato in passato
      l'autore "RM" quando ha cambiato i prezzi
 
 Uso:
@@ -33,7 +46,7 @@ from pathlib import Path
 
 from core import db
 from core.config import carica_config
-from core.utils import formatta_data, formatta_data_estesa, oggi
+from core.utils import formatta_data, formatta_data_estesa, is_weekend, oggi, stagione_di
 
 ORIZZONTE_GIORNI_DEFAULT = 30
 PICKUP_GIORNI = 7
@@ -107,7 +120,111 @@ def costruisci_situazione(conn, capacity_units, oggi_data, orizzonte_giorni):
 
 
 # ---------------------------------------------------------------------------
-# b) Confronto con lo stesso periodo dell'anno precedente
+# b) Pickup dettagliato: ultima rilevazione vs precedente, vs ~7 giorni fa,
+#    e confronto anno precedente SEMPRE on-the-books contro on-the-books
+# ---------------------------------------------------------------------------
+
+def _otb_stly(conn, capacity_unit_id, channel, data_target, giorni_out):
+    """Cerca la disponibilita' registrata un anno fa ALLO STESSO numero di
+    giorni prima dell'arrivo (stesso punto della curva di prenotazione),
+    usando l'offset -364 gia' impiegato da confronto_anno_precedente per
+    restare allineati al giorno della settimana.
+
+    Cerca una corrispondenza ESATTA (non "la piu' vicina disponibile
+    prima"): se quella rilevazione precisa non esiste nello storico, la
+    regola e' di dichiararlo esplicitamente ("storico non disponibile")
+    invece di ripiegare su un altro dato (come l'occupazione finale
+    consuntiva) che misurerebbe una cosa diversa e darebbe un confronto
+    fuorviante."""
+    data_target_stly = data_target - timedelta(days=364)
+    data_rilevazione_stly = data_target_stly - timedelta(days=giorni_out)
+
+    riga = conn.execute(
+        """
+        SELECT units_available FROM inventory_snapshot
+        WHERE target_date = ? AND capacity_unit_id = ? AND channel = ? AND snapshot_date = ?
+        """,
+        (formatta_data(data_target_stly), capacity_unit_id, channel, formatta_data(data_rilevazione_stly)),
+    ).fetchone()
+
+    if riga is None:
+        return None
+    return {"data_target": data_target_stly, "data_rilevazione": data_rilevazione_stly, "disponibili": riga["units_available"]}
+
+
+def costruisci_pickup_dettagliato(conn, capacity_units, oggi_data, orizzonte_giorni, canale):
+    """Per ogni data futura (nell'orizzonte del report) e tipologia con
+    almeno 2 rilevazioni distinte in inventory_snapshot, calcola:
+      - il pickup tra l'ultima rilevazione e quella immediatamente
+        precedente (qualunque sia la distanza in giorni tra le due);
+      - il pickup rispetto alla rilevazione di esattamente ~7 giorni prima,
+        se esiste;
+      - il confronto OTB-vs-OTB con l'anno scorso allo stesso numero di
+        giorni-dall'arrivo (vedi _otb_stly)."""
+    righe = []
+    oggi_str = formatta_data(oggi_data)
+
+    for offset in range(orizzonte_giorni):
+        data_target = oggi_data + timedelta(days=offset)
+        data_target_str = formatta_data(data_target)
+
+        for unita in capacity_units:
+            rilevazioni = conn.execute(
+                """
+                SELECT snapshot_date, units_available
+                FROM inventory_snapshot
+                WHERE target_date = ? AND capacity_unit_id = ? AND channel = ? AND snapshot_date <= ?
+                ORDER BY snapshot_date
+                """,
+                (data_target_str, unita["id"], canale, oggi_str),
+            ).fetchall()
+
+            if len(rilevazioni) < 2:
+                continue
+
+            ultima = rilevazioni[-1]
+            precedente = rilevazioni[-2]
+            data_ultima = datetime.strptime(ultima["snapshot_date"], "%Y-%m-%d").date()
+
+            pickup_ultimo = precedente["units_available"] - ultima["units_available"]
+
+            data_7gg = formatta_data(data_ultima - timedelta(days=7))
+            rilevazione_7gg = next((r for r in rilevazioni if r["snapshot_date"] == data_7gg), None)
+            pickup_7gg = (rilevazione_7gg["units_available"] - ultima["units_available"]) if rilevazione_7gg else None
+
+            giorni_out = (data_target - data_ultima).days
+            otb_stly = _otb_stly(conn, unita["id"], canale, data_target, giorni_out)
+
+            confronto_stly = None
+            if otb_stly is not None:
+                pct_corrente = round(ultima["units_available"] / unita["total_units"] * 100, 1)
+                pct_stly = round(otb_stly["disponibili"] / unita["total_units"] * 100, 1)
+                confronto_stly = {
+                    "disponibili": otb_stly["disponibili"],
+                    "disponibilita_pct": pct_stly,
+                    "differenza_pct": round(pct_corrente - pct_stly, 1),
+                }
+
+            righe.append({
+                "data_target": data_target,
+                "unita_code": unita["code"],
+                "unita_name": unita["name"],
+                "unita_totale": unita["total_units"],
+                "data_ultima_rilevazione": data_ultima,
+                "disponibili": ultima["units_available"],
+                "disponibilita_pct": round(ultima["units_available"] / unita["total_units"] * 100, 1),
+                "n_rilevazioni": len(rilevazioni),
+                "pickup_ultimo": pickup_ultimo,
+                "pickup_7gg": pickup_7gg,
+                "giorni_out": giorni_out,
+                "confronto_stly": confronto_stly,
+            })
+
+    return righe
+
+
+# ---------------------------------------------------------------------------
+# c) Confronto con lo stesso periodo dell'anno precedente
 # ---------------------------------------------------------------------------
 
 def _statistiche_periodo(conn, data_inizio, data_fine, capacity_unit_id=None, creato_entro_il=None):
@@ -190,7 +307,7 @@ def variazione_pct(valore_nuovo, valore_vecchio):
 
 
 # ---------------------------------------------------------------------------
-# c) Anomalie
+# d) Anomalie
 # ---------------------------------------------------------------------------
 
 def rileva_anomalie(situazione, orizzonte_giorni):
@@ -229,8 +346,137 @@ def rileva_anomalie(situazione, orizzonte_giorni):
 
 
 # ---------------------------------------------------------------------------
-# d) Motore di suggerimenti a regole parametriche
+# e) Motore di suggerimenti a regole parametriche
 # ---------------------------------------------------------------------------
+
+def _prezzo_base_griglia(config, codice_unita, data):
+    """Prezzo di riferimento "da listino" per il livello 1 della
+    motivazione: il punto medio della fascia di prezzo della stagione
+    tariffaria della data. A differenza di genera_demo.py qui non c'e'
+    nessuna casualita': il report deve essere spiegabile e dare sempre
+    lo stesso numero per gli stessi dati in ingresso."""
+    fasce = config["price_ranges"].get(codice_unita)
+    if not fasce:
+        return None
+    stagione = stagione_di(data, config)
+    if stagione in fasce:
+        minimo, massimo = fasce[stagione]
+    else:
+        # "media" non ha una fascia propria in config.json: si interpola
+        # tra bassa e alta.
+        minimo = (fasce["bassa"][0] + fasce["alta"][0]) / 2
+        massimo = (fasce["bassa"][1] + fasce["alta"][1]) / 2
+    return {"stagione": stagione, "minimo": minimo, "massimo": massimo, "riferimento": round((minimo + massimo) / 2)}
+
+
+def _evento_del_giorno(conn, data):
+    """Cerca un evento/segnale esterno registrato esattamente per questa
+    data (usato nel livello 3 della motivazione)."""
+    return conn.execute(
+        """
+        SELECT description, impact_score FROM external_signal
+        WHERE signal_date = ? AND impact_score > 0
+        ORDER BY impact_score DESC LIMIT 1
+        """,
+        (formatta_data(data),),
+    ).fetchone()
+
+
+def costruisci_livelli_prezzo(conn, config, voce, tipo_regola, tipologia_scarsa, soglia_totale_unita_scarse, aumento_pct):
+    """Scompone la motivazione di un suggerimento di prezzo (aumento,
+    aumento per unita' scarsa, o ribasso/promo) nei livelli espliciti
+    richiesti, in ordine fisso:
+      1) prezzo base da griglia tariffaria
+      2) fattore occupazione/pickup
+      3) aggiustamento giorno-settimana/evento
+      4) regola unita' scarse
+      5) limiti min/max
+    Restituisce la lista ordinata dei livelli (stringhe gia' pronte per la
+    visualizzazione); la sintesi finale resta un testo separato a carico
+    del chiamante, per non perdere la frase riassuntiva gia' in uso."""
+    data = voce["data"]
+    livelli = []
+
+    # --- Livello 1: prezzo base da griglia ---------------------------------
+    base = _prezzo_base_griglia(config, voce["unita_code"], data)
+    if base:
+        livelli.append(
+            f"1. Prezzo base da griglia ({base['stagione']} stagione): "
+            f"{base['minimo']:.0f}-{base['massimo']:.0f} EUR, riferimento {base['riferimento']} EUR"
+        )
+    else:
+        livelli.append(f"1. Prezzo base da griglia: tipologia '{voce['unita_code']}' non presente in price_ranges di config.json")
+
+    # --- Livello 2: fattore occupazione/pickup ------------------------------
+    if tipo_regola == "unita_scarse_aumento":
+        livelli.append(
+            f"2. Fattore occupazione (unita' scarsa): resta {voce['disponibili']} unita' su "
+            f"{voce['unita_totale']} a {voce['giorni_al_target']} giorni dalla data "
+            f"→ propone +{aumento_pct}%"
+        )
+    elif tipo_regola == "aumento_prezzo":
+        livelli.append(
+            f"2. Fattore occupazione: disponibilita' al {voce['disponibilita_pct']:.0f}% "
+            f"con {voce['giorni_al_target']} giorni di anticipo → propone +{aumento_pct}%"
+        )
+    elif tipo_regola == "ribasso_promo":
+        livelli.append(
+            f"2. Fattore pickup: pickup ultimi {PICKUP_GIORNI} giorni fermo ({voce['pickup']:+d} unita'), "
+            f"disponibilita' al {voce['disponibilita_pct']:.0f}% a {voce['giorni_al_target']} giorni dalla data "
+            "→ propone un'azione promozionale (percentuale non parametrizzata in config.json, "
+            "da valutare manualmente)"
+        )
+
+    # --- Livello 3: aggiustamento giorno-settimana/evento -------------------
+    weekend = is_weekend(data)
+    evento = _evento_del_giorno(conn, data)
+    if weekend and evento:
+        livelli.append(
+            f"3. Aggiustamento giorno-settimana/evento: weekend (venerdi'/sabato, domanda tipicamente "
+            f"piu' alta) + evento segnalato '{evento['description']}' (impatto {evento['impact_score']:.0f}/10)"
+        )
+    elif weekend:
+        livelli.append("3. Aggiustamento giorno-settimana/evento: weekend (venerdi'/sabato, domanda tipicamente piu' alta)")
+    elif evento:
+        livelli.append(
+            f"3. Aggiustamento giorno-settimana/evento: evento segnalato '{evento['description']}' "
+            f"(impatto {evento['impact_score']:.0f}/10)"
+        )
+    else:
+        livelli.append("3. Aggiustamento giorno-settimana/evento: nessuno (giorno feriale, nessun evento segnalato)")
+
+    # --- Livello 4: regola unita' scarse ------------------------------------
+    if tipologia_scarsa:
+        livelli.append(
+            f"4. Regola unita' scarse: applicata (tipologia con {voce['unita_totale']} unita' totali, "
+            f"soglia configurata {soglia_totale_unita_scarse})"
+        )
+    else:
+        livelli.append(
+            f"4. Regola unita' scarse: non applicabile (tipologia con {voce['unita_totale']} unita' totali, "
+            f"sopra la soglia configurata di {soglia_totale_unita_scarse})"
+        )
+
+    # --- Livello 5: limiti min/max -------------------------------------------
+    if base and tipo_regola in ("aumento_prezzo", "unita_scarse_aumento") and voce.get("prezzo"):
+        prezzo_proposto = voce["prezzo"] * (1 + aumento_pct / 100)
+        if prezzo_proposto > base["massimo"]:
+            livelli.append(
+                f"5. Limiti min/max: il prezzo proposto ({prezzo_proposto:.0f} EUR) supererebbe il massimo "
+                f"di listino ({base['massimo']:.0f} EUR): da limitare a {base['massimo']:.0f} EUR"
+            )
+        else:
+            livelli.append(
+                f"5. Limiti min/max: il prezzo proposto ({prezzo_proposto:.0f} EUR) resta entro il massimo "
+                f"di listino ({base['massimo']:.0f} EUR)"
+            )
+    elif base and tipo_regola == "ribasso_promo":
+        livelli.append(f"5. Limiti min/max: non scendere comunque sotto il minimo di listino ({base['minimo']:.0f} EUR)")
+    else:
+        livelli.append("5. Limiti min/max: non verificabile (prezzo base da griglia non disponibile)")
+
+    return livelli
+
 
 def registra_decisione(conn, oggi_data, voce, decision_type, suggestion, reasoning, urgenza, dati_extra=None):
     dati = {
@@ -296,8 +542,11 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
                     f"{voce['giorni_al_target']} giorni dalla data: e' una tipologia scarsa e richiesta, "
                     "vale la pena provare a venderla a un prezzo piu' alto."
                 )
-                suggerimenti.append({"voce": voce, "tipo": "unita_scarse_aumento", "azione": testo, "motivo": motivo, "urgenza": urgenza})
-                registra_decisione(conn, oggi_data, voce, "unita_scarse_aumento", testo, motivo, urgenza)
+                livelli = costruisci_livelli_prezzo(
+                    conn, config, voce, "unita_scarse_aumento", tipologia_scarsa, soglia_totale_unita_scarse, s["aumento_pct"]
+                )
+                suggerimenti.append({"voce": voce, "tipo": "unita_scarse_aumento", "azione": testo, "motivo": motivo, "livelli": livelli, "urgenza": urgenza})
+                registra_decisione(conn, oggi_data, voce, "unita_scarse_aumento", testo, motivo, urgenza, dati_extra={"livelli": livelli})
         elif (
             voce["disponibili"] > 0
             and voce["disponibilita_pct"] < s["disponibilita_max_pct"]
@@ -311,8 +560,11 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
                 f"con ancora {voce['giorni_al_target']} giorni di anticipo: la domanda e' sostenuta, "
                 "c'e' margine per vendere le unita' rimaste a un prezzo piu' alto."
             )
-            suggerimenti.append({"voce": voce, "tipo": "aumento_prezzo", "azione": testo, "motivo": motivo, "urgenza": urgenza})
-            registra_decisione(conn, oggi_data, voce, "aumento_prezzo", testo, motivo, urgenza)
+            livelli = costruisci_livelli_prezzo(
+                conn, config, voce, "aumento_prezzo", tipologia_scarsa, soglia_totale_unita_scarse, s["aumento_pct"]
+            )
+            suggerimenti.append({"voce": voce, "tipo": "aumento_prezzo", "azione": testo, "motivo": motivo, "livelli": livelli, "urgenza": urgenza})
+            registra_decisione(conn, oggi_data, voce, "aumento_prezzo", testo, motivo, urgenza, dati_extra={"livelli": livelli})
 
         s = soglie["ribasso_o_promo"]
         if (
@@ -329,8 +581,11 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
                 f"ancora al {voce['disponibilita_pct']:.0f}% e solo {voce['giorni_al_target']} giorni alla data: "
                 "rischio concreto di rimanere con invenduto."
             )
-            suggerimenti.append({"voce": voce, "tipo": "ribasso_promo", "azione": testo, "motivo": motivo, "urgenza": urgenza})
-            registra_decisione(conn, oggi_data, voce, "ribasso_promo", testo, motivo, urgenza)
+            livelli = costruisci_livelli_prezzo(
+                conn, config, voce, "ribasso_promo", tipologia_scarsa, soglia_totale_unita_scarse, s.get("aumento_pct")
+            )
+            suggerimenti.append({"voce": voce, "tipo": "ribasso_promo", "azione": testo, "motivo": motivo, "livelli": livelli, "urgenza": urgenza})
+            registra_decisione(conn, oggi_data, voce, "ribasso_promo", testo, motivo, urgenza, dati_extra={"livelli": livelli})
 
         s = soglie["chiusura_ota"]
         if voce["disponibilita_pct"] < s["disponibilita_critica_pct"]:
@@ -382,7 +637,7 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
 
 
 # ---------------------------------------------------------------------------
-# e) Playbook del revenue manager (analisi dei rate_event dell'autore RM)
+# f) Playbook del revenue manager (analisi dei rate_event dell'autore RM)
 # ---------------------------------------------------------------------------
 
 def analizza_playbook_rm(conn, autore="RM"):
@@ -455,7 +710,7 @@ def _num(valore, decimali=0, suffisso=""):
     return f"{valore:,.{decimali}f}{suffisso}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def costruisci_html(config, oggi_data, situazione, confronto, anomalie, suggerimenti, playbook, orizzonte_giorni):
+def costruisci_html(config, oggi_data, situazione, pickup_dettagliato, confronto, anomalie, suggerimenti, playbook, orizzonte_giorni):
     nome_struttura = html.escape(config["structure_name"])
     generato_il = datetime.now().strftime("%d/%m/%Y alle %H:%M")
 
@@ -480,7 +735,51 @@ def costruisci_html(config, oggi_data, situazione, confronto, anomalie, suggerim
             "</tr>\n"
         )
 
-    # --- sezione b: confronto anno precedente ------------------------------
+    # --- sezione b: pickup dettagliato (ultima vs precedente, vs 7gg, STLY) -
+    if pickup_dettagliato:
+        righe_pickup = ""
+        for r in pickup_dettagliato:
+            pickup_ultimo_testo = f"{r['pickup_ultimo']:+d}"
+            pickup_7gg_testo = "N/D" if r["pickup_7gg"] is None else f"{r['pickup_7gg']:+d}"
+            if r["confronto_stly"] is None:
+                otb_stly_testo = "storico non disponibile"
+            else:
+                cs = r["confronto_stly"]
+                otb_stly_testo = (
+                    f"{cs['disponibili']}/{r['unita_totale']} ({cs['disponibilita_pct']:.0f}%), "
+                    f"differenza {cs['differenza_pct']:+.1f} punti"
+                )
+            righe_pickup += (
+                "<tr>"
+                f"<td>{formatta_data(r['data_target'])}</td>"
+                f"<td>{html.escape(r['unita_name'])} ({html.escape(r['unita_code'])})</td>"
+                f"<td>{formatta_data(r['data_ultima_rilevazione'])} ({r['n_rilevazioni']} rilevazioni)</td>"
+                f"<td>{r['disponibili']}/{r['unita_totale']} ({r['disponibilita_pct']:.0f}%)</td>"
+                f"<td>{pickup_ultimo_testo}</td>"
+                f"<td>{pickup_7gg_testo}</td>"
+                f"<td>{otb_stly_testo}</td>"
+                "</tr>\n"
+            )
+        blocco_pickup = f"""
+        <p class="dettaglio">
+          Solo le combinazioni data/tipologia con almeno 2 rilevazioni in
+          inventory_snapshot (comprese quelle importate col log
+          disponibilita') compaiono qui. Il confronto con l'anno scorso e'
+          sempre "on the books contro on the books" allo stesso numero di
+          giorni prima dell'arrivo (mai contro l'occupazione finale): se
+          quella rilevazione precisa non esiste nello storico, lo dice
+          esplicitamente invece di indovinare.
+        </p>
+        <table>
+          <tr><th>Data</th><th>Tipologia</th><th>Ultima rilevazione</th><th>Disponibili</th>
+              <th>Pickup vs precedente</th><th>Pickup ~7gg</th><th>OTB anno scorso (stesso anticipo)</th></tr>
+          {righe_pickup}
+        </table>
+        """
+    else:
+        blocco_pickup = "<p>Nessuna data ha ancora almeno 2 rilevazioni in inventory_snapshot: il pickup dettagliato richiede piu' di uno snapshot per la stessa data futura (arriva con l'uso di snapshot_oggi.py o l'import del log disponibilita').</p>"
+
+    # --- sezione c: confronto anno precedente ------------------------------
     tc, tp = confronto["totale_corrente"], confronto["totale_precedente"]
     var_prenotazioni = variazione_pct(tc["n_prenotazioni"], tp["n_prenotazioni"])
     var_notti = variazione_pct(tc["notti"], tp["notti"])
@@ -502,7 +801,7 @@ def costruisci_html(config, oggi_data, situazione, confronto, anomalie, suggerim
             "</tr>\n"
         )
 
-    # --- sezione c: anomalie ------------------------------------------------
+    # --- sezione d: anomalie ------------------------------------------------
     if anomalie:
         righe_anomalie = ""
         for a in anomalie:
@@ -516,17 +815,26 @@ def costruisci_html(config, oggi_data, situazione, confronto, anomalie, suggerim
     else:
         righe_anomalie = "<p>Nessuna anomalia rilevata nei prossimi giorni.</p>"
 
-    # --- sezione d: suggerimenti --------------------------------------------
+    # --- sezione e: suggerimenti --------------------------------------------
     if suggerimenti:
         righe_suggerimenti = ""
         for s in suggerimenti:
             v = s["voce"]
+            if s.get("livelli"):
+                # <ul>, non <ol>: ogni livello ha gia' il proprio numero nel
+                # testo (es. "1. Prezzo base..."), un <ol> lo raddoppierebbe.
+                livelli_html = "<ul class='livelli-prezzo'>" + "".join(
+                    f"<li>{html.escape(livello)}</li>" for livello in s["livelli"]
+                ) + "</ul>"
+                dettaglio_html = f"{livelli_html}<div class='sintesi'>Sintesi: {html.escape(s['motivo'])}</div>"
+            else:
+                dettaglio_html = f"<div class='dettaglio'>{html.escape(s['motivo'])}</div>"
             righe_suggerimenti += (
                 "<div class='riquadro-suggerimento'>"
                 f"{_badge_urgenza(s['urgenza'])} "
                 f"<strong>{formatta_data(v['data'])} - {html.escape(v['unita_name'])}</strong>: "
                 f"{html.escape(s['azione'])}"
-                f"<div class='dettaglio'>{html.escape(s['motivo'])}</div>"
+                f"{dettaglio_html}"
                 "</div>\n"
             )
     else:
@@ -534,7 +842,7 @@ def costruisci_html(config, oggi_data, situazione, confronto, anomalie, suggerim
 
     n_alta = sum(1 for s in suggerimenti if s["urgenza"] == "alta")
 
-    # --- sezione e: playbook RM ---------------------------------------------
+    # --- sezione f: playbook RM ---------------------------------------------
     if playbook is None:
         blocco_playbook = "<p>Non ci sono ancora variazioni di prezzo registrate dall'autore 'RM'.</p>"
     else:
@@ -582,6 +890,9 @@ def costruisci_html(config, oggi_data, situazione, confronto, anomalie, suggerim
   .riquadro-anomalia {{ background: #fff8e6; border-left: 4px solid #9a6700; padding: 10px 14px; margin-bottom: 8px; }}
   .riquadro-suggerimento {{ background: #fff; border: 1px solid #e0e3e8; border-left: 4px solid #10334f; padding: 10px 14px; margin-bottom: 8px; }}
   .dettaglio {{ color: #57606a; font-size: 13px; }}
+  .livelli-prezzo {{ color: #57606a; font-size: 13px; margin: 6px 0 4px 0; padding-left: 0; list-style: none; }}
+  .livelli-prezzo li {{ margin-bottom: 2px; }}
+  .sintesi {{ font-size: 13px; margin-top: 4px; }}
   .badge {{ display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: bold; color: #fff; }}
   .badge-alta {{ background: #cf222e; }}
   .badge-media {{ background: #9a6700; }}
@@ -607,7 +918,10 @@ def costruisci_html(config, oggi_data, situazione, confronto, anomalie, suggerim
     {righe_situazione}
   </table>
 
-  <h2>b) Confronto con lo stesso periodo dell'anno precedente</h2>
+  <h2>b) Pickup dettagliato</h2>
+  {blocco_pickup}
+
+  <h2>c) Confronto con lo stesso periodo dell'anno precedente</h2>
   <p class="dettaglio">
     Periodo corrente: {formatta_data(inizio_c)} &rarr; {formatta_data(fine_c)}
     (prenotazioni fatte finora).
@@ -626,13 +940,13 @@ def costruisci_html(config, oggi_data, situazione, confronto, anomalie, suggerim
     {righe_unita_confronto}
   </table>
 
-  <h2>c) Date anomale da controllare</h2>
+  <h2>d) Date anomale da controllare</h2>
   {righe_anomalie}
 
-  <h2>d) Suggerimenti</h2>
+  <h2>e) Suggerimenti</h2>
   {righe_suggerimenti}
 
-  <h2>e) Playbook del revenue manager (storico variazioni prezzo di "RM")</h2>
+  <h2>f) Playbook del revenue manager (storico variazioni prezzo di "RM")</h2>
   {blocco_playbook}
 
 </div>
@@ -663,14 +977,19 @@ def main(argv=None):
 
     oggi_data = oggi()
 
+    canale_riferimento = config["channels"][0]
+
     print("Analisi della situazione in corso...")
     situazione = costruisci_situazione(conn, capacity_units, oggi_data, args.giorni)
+    pickup_dettagliato = costruisci_pickup_dettagliato(conn, capacity_units, oggi_data, args.giorni, canale_riferimento)
     confronto = confronto_anno_precedente(conn, capacity_units, oggi_data, args.giorni)
     anomalie = rileva_anomalie(situazione, args.giorni)
     suggerimenti = genera_suggerimenti(conn, situazione, config, oggi_data, args.giorni)
     playbook = analizza_playbook_rm(conn)
 
-    html_report = costruisci_html(config, oggi_data, situazione, confronto, anomalie, suggerimenti, playbook, args.giorni)
+    html_report = costruisci_html(
+        config, oggi_data, situazione, pickup_dettagliato, confronto, anomalie, suggerimenti, playbook, args.giorni
+    )
 
     percorso_output = Path(args.output)
     percorso_output.parent.mkdir(parents=True, exist_ok=True)
