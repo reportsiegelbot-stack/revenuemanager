@@ -4,6 +4,10 @@ vault.db
 # Report generati
 report/*.html
 
+# Contratto JSON e pagina autonoma generati da dashboard/esporta_stato.py
+dashboard/dati.json
+dashboard/dashboard_standalone.html
+
 # File di cache di Python
 __pycache__/
 *.pyc
