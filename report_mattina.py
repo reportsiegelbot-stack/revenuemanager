@@ -8,7 +8,9 @@ in pochi minuti da chi si occupa dei prezzi e della disponibilita'.
 
 Contiene:
   a) la situazione dei prossimi 30 giorni (disponibilita', prezzo, pickup)
-  b) il confronto con lo stesso periodo dell'anno precedente
+  b) il confronto con lo stesso periodo dell'anno precedente (allineato
+     al giorno della settimana: -364 giorni, non -365, cosi' un sabato
+     viene sempre confrontato con un sabato)
   c) le date "anomale" da controllare
   d) suggerimenti generati da un motore a regole parametriche (le soglie
      sono tutte lette da config.json, non ce n'e' nessuna scritta nel
@@ -155,8 +157,13 @@ def confronto_anno_precedente(conn, capacity_units, oggi_data, orizzonte_giorni)
     ancora in costruzione, sembrerebbe sempre molto peggiore di quello
     passato, che invece e' ormai completo)."""
     fine_periodo = oggi_data + timedelta(days=orizzonte_giorni - 1)
-    inizio_anno_scorso = oggi_data - timedelta(days=365)
-    fine_anno_scorso = fine_periodo - timedelta(days=365)
+    # -364 giorni (52 settimane esatte), non -365: cosi' la data di un anno fa
+    # cade sempre sullo stesso giorno della settimana di oggi (un sabato viene
+    # confrontato con un sabato, non con un venerdi'). Con -365 giorni il
+    # giorno della settimana si sfasa di 1 (o 2 negli anni bisestili), il che
+    # falsa il confronto per un'attivita' con forte differenza weekend/feriali.
+    inizio_anno_scorso = oggi_data - timedelta(days=364)
+    fine_anno_scorso = fine_periodo - timedelta(days=364)
 
     totale_corrente = _statistiche_periodo(conn, oggi_data, fine_periodo, creato_entro_il=oggi_data)
     totale_precedente = _statistiche_periodo(conn, inizio_anno_scorso, fine_anno_scorso, creato_entro_il=inizio_anno_scorso)
