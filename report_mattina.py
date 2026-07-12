@@ -71,7 +71,7 @@ def costruisci_situazione(conn, capacity_units, oggi_data, orizzonte_giorni):
         for unita in capacity_units:
             ultimo = conn.execute(
                 """
-                SELECT units_available, price_published, snapshot_date
+                SELECT units_available, price_published, snapshot_date, channel
                 FROM inventory_snapshot
                 WHERE target_date = ? AND capacity_unit_id = ? AND snapshot_date <= ?
                 ORDER BY snapshot_date DESC
@@ -91,6 +91,10 @@ def costruisci_situazione(conn, capacity_units, oggi_data, orizzonte_giorni):
                 "disponibilita_pct": None,
                 "prezzo": None,
                 "pickup": None,
+                # Canale della rilevazione che ha fornito prezzo/disponibilita':
+                # serve a R13 (esiti_decisioni.py) per confrontare solo
+                # rilevazioni dello stesso canale su cui e' nata la decisione.
+                "canale": None,
             }
 
             if ultimo is not None:
@@ -98,6 +102,7 @@ def costruisci_situazione(conn, capacity_units, oggi_data, orizzonte_giorni):
                 voce["disponibili"] = disponibili
                 voce["disponibilita_pct"] = round(disponibili / unita["total_units"] * 100, 1)
                 voce["prezzo"] = ultimo["price_published"]
+                voce["canale"] = ultimo["channel"]
 
                 data_riferimento = datetime.strptime(ultimo["snapshot_date"], "%Y-%m-%d").date()
                 data_confronto_str = formatta_data(data_riferimento - timedelta(days=PICKUP_GIORNI))
@@ -527,6 +532,44 @@ def registra_decisione(conn, oggi_data, voce, decision_type, suggestion, reasoni
     )
 
 
+def registra_decision_outcome(conn, oggi_data, voce, decision_type, prezzo_suggerito, livelli):
+    """Registra in decision_outcome (R13) un suggerimento di prezzo, in
+    modo idempotente: se lo stesso suggerimento (stesso giorno, stessa
+    data_target, stessa tipologia, stesso tipo) e' gia' stato registrato
+    oggi, non lo duplica (INSERT OR IGNORE sull'indice unico).
+
+    Solo le decisioni che modificano un prezzo di griglia vengono
+    tracciate qui (aumento_prezzo, unita_scarse_aumento, ribasso_promo),
+    coerentemente con l'ambito della ricetta a 5 livelli chiarito in P2
+    v1.1 di docs/SPECIFICA_MOTORE.md: chiusura_ota e opportunita_evento
+    non hanno un prezzo da misurare, tracciarle richiederebbe una metrica
+    diversa (deferito, vedi docs/DIVERGENZE_SPECIFICA.md)."""
+    if voce.get("canale") is None:
+        # Nessuna rilevazione con canale noto per questa voce: non c'e'
+        # nulla su cui basare in futuro un confronto "stesso canale"
+        # (requisito R13), quindi non tracciamo la decisione.
+        return
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO decision_outcome
+            (generated_date, target_date, capacity_unit_id, decision_type, channel,
+             current_price, current_units, suggested_price, reasoning_json, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+        """,
+        (
+            formatta_data(oggi_data),
+            formatta_data(voce["data"]),
+            voce.get("unita_id"),
+            decision_type,
+            voce["canale"],
+            voce.get("prezzo"),
+            voce.get("disponibili"),
+            prezzo_suggerito,
+            json.dumps(livelli, ensure_ascii=False),
+        ),
+    )
+
+
 def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
     soglie = config["rules_thresholds"]
     # Sotto questa soglia di unita' TOTALI, le percentuali non sono piu'
@@ -567,6 +610,8 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
                 )
                 suggerimenti.append({"voce": voce, "tipo": "unita_scarse_aumento", "azione": testo, "motivo": motivo, "livelli": livelli, "urgenza": urgenza})
                 registra_decisione(conn, oggi_data, voce, "unita_scarse_aumento", testo, motivo, urgenza, dati_extra={"livelli": livelli})
+                prezzo_suggerito = voce["prezzo"] * (1 + s["aumento_pct"] / 100) if voce.get("prezzo") else None
+                registra_decision_outcome(conn, oggi_data, voce, "unita_scarse_aumento", prezzo_suggerito, livelli)
         elif (
             voce["disponibili"] > 0
             and voce["disponibilita_pct"] <= s["disponibilita_max_pct"]
@@ -585,6 +630,8 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
             )
             suggerimenti.append({"voce": voce, "tipo": "aumento_prezzo", "azione": testo, "motivo": motivo, "livelli": livelli, "urgenza": urgenza})
             registra_decisione(conn, oggi_data, voce, "aumento_prezzo", testo, motivo, urgenza, dati_extra={"livelli": livelli})
+            prezzo_suggerito = voce["prezzo"] * (1 + s["aumento_pct"] / 100) if voce.get("prezzo") else None
+            registra_decision_outcome(conn, oggi_data, voce, "aumento_prezzo", prezzo_suggerito, livelli)
 
         s = soglie["ribasso_o_promo"]
         if (
@@ -608,6 +655,12 @@ def genera_suggerimenti(conn, situazione, config, oggi_data, orizzonte_giorni):
             )
             suggerimenti.append({"voce": voce, "tipo": "ribasso_promo", "azione": testo, "motivo": motivo, "livelli": livelli, "urgenza": urgenza})
             registra_decisione(conn, oggi_data, voce, "ribasso_promo", testo, motivo, urgenza, dati_extra={"livelli": livelli})
+            # Nessun prezzo_suggerito numerico: R2 propone una leva non di
+            # prezzo, il ribasso di listino resta l'ultima opzione senza una
+            # percentuale parametrizzata. esiti_decisioni.py lo sa e misura
+            # solo il pickup, dichiarando esplicitamente che e' una misura
+            # indiretta (vedi registra_decision_outcome).
+            registra_decision_outcome(conn, oggi_data, voce, "ribasso_promo", None, livelli)
 
         s = soglie["chiusura_ota"]
         if voce["disponibilita_pct"] <= s["disponibilita_critica_pct"]:
@@ -718,6 +771,50 @@ def analizza_playbook_rm(conn, autore="RM"):
 
 
 # ---------------------------------------------------------------------------
+# g) Riepilogo esiti delle decisioni (R13)
+# ---------------------------------------------------------------------------
+
+ETICHETTE_STATO_ESITO = {
+    "pending": "in attesa di rilevazioni",
+    "followed": "seguita",
+    "not_followed": "non seguita",
+    "partial": "parziale",
+    "not_measurable": "non misurabile",
+}
+
+
+def costruisci_riepilogo_esiti(conn):
+    """Legge decision_outcome (popolata da genera_suggerimenti, misurata da
+    esiti_decisioni.py) e prepara i dati per la sezione g) del report:
+    conteggi per stato, tenendo SEPARATE le decisioni di prezzo numerico
+    (aumento_prezzo, unita_scarse_aumento) da ribasso_promo, che e' una
+    misura indiretta e non va mai sommata alle altre senza distinzione."""
+    righe = conn.execute(
+        """
+        SELECT do.*, cu.code AS unita_code, cu.name AS unita_name
+        FROM decision_outcome do
+        LEFT JOIN capacity_unit cu ON cu.id = do.capacity_unit_id
+        ORDER BY do.id DESC
+        """
+    ).fetchall()
+
+    conteggi_prezzo = Counter()
+    conteggi_ribasso = Counter()
+    for r in righe:
+        if r["decision_type"] in ("aumento_prezzo", "unita_scarse_aumento"):
+            conteggi_prezzo[r["status"]] += 1
+        else:
+            conteggi_ribasso[r["status"]] += 1
+
+    return {
+        "totale": len(righe),
+        "conteggi_prezzo": dict(conteggi_prezzo),
+        "conteggi_ribasso": dict(conteggi_ribasso),
+        "ultime": [dict(r) for r in righe[:5]],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Generazione HTML
 # ---------------------------------------------------------------------------
 
@@ -741,7 +838,7 @@ def _num(valore, decimali=0, suffisso=""):
     return f"{valore:,.{decimali}f}{suffisso}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def costruisci_html(config, oggi_data, situazione, pickup_dettagliato, confronto, anomalie, suggerimenti, playbook, orizzonte_giorni):
+def costruisci_html(config, oggi_data, situazione, pickup_dettagliato, confronto, anomalie, suggerimenti, playbook, riepilogo_esiti, orizzonte_giorni):
     nome_struttura = html.escape(config["structure_name"])
     generato_il = datetime.now().strftime("%d/%m/%Y alle %H:%M")
 
@@ -920,6 +1017,70 @@ def costruisci_html(config, oggi_data, situazione, pickup_dettagliato, confronto
         </p>
         """
 
+    # --- sezione g: esiti delle decisioni (R13) -----------------------------
+    def _riga_conteggi(conteggi, totale_gruppo):
+        if not conteggi:
+            return "<li>nessuna decisione registrata</li>"
+        pezzi = []
+        for stato in ("pending", "followed", "not_followed", "partial", "not_measurable"):
+            if stato in conteggi:
+                pezzi.append(f"<li>{ETICHETTE_STATO_ESITO[stato]}: <strong>{conteggi[stato]}</strong></li>")
+        return "".join(pezzi)
+
+    if riepilogo_esiti["totale"] == 0:
+        blocco_esiti = (
+            "<p>Il tracciamento degli esiti (R13) e' attivo: da oggi ogni suggerimento di aumento prezzo, "
+            "unita' scarse o ribasso/promo viene registrato automaticamente. Non ci sono ancora decisioni "
+            "abbastanza vecchie da poter misurare un esito: servono alcuni giorni di rilevazioni successive "
+            "alla decisione (vedi <code>esiti_decisioni.py</code>). In attesa di rilevazioni.</p>"
+        )
+    else:
+        totale_prezzo = sum(riepilogo_esiti["conteggi_prezzo"].values())
+        totale_ribasso = sum(riepilogo_esiti["conteggi_ribasso"].values())
+        righe_ultime = ""
+        for r in riepilogo_esiti["ultime"]:
+            nome_unita = html.escape(r["unita_name"]) if r["unita_name"] else "N/D"
+            prezzo_sugg_testo = "—" if r["suggested_price"] is None else _num(r["suggested_price"], 0, " EUR")
+            stato_testo = ETICHETTE_STATO_ESITO.get(r["status"], r["status"])
+            marcatore = " *" if r["decision_type"] == "ribasso_promo" else ""
+            dettaglio_testo = html.escape(r["measurement_detail"]) if r["measurement_detail"] else "—"
+            righe_ultime += (
+                "<tr>"
+                f"<td>{r['generated_date']}</td>"
+                f"<td>{r['target_date']}</td>"
+                f"<td>{nome_unita}</td>"
+                f"<td>{html.escape(r['decision_type'])}{marcatore}</td>"
+                f"<td>{_num(r['current_price'], 0, ' EUR') if r['current_price'] is not None else '—'}</td>"
+                f"<td>{prezzo_sugg_testo}</td>"
+                f"<td>{html.escape(stato_testo)}</td>"
+                f"<td class='dettaglio'>{dettaglio_testo}</td>"
+                "</tr>\n"
+            )
+        blocco_esiti = f"""
+        <p class="dettaglio">
+          {riepilogo_esiti['totale']} decisioni di prezzo tracciate in totale. Le decisioni "ribasso_promo"
+          (segnate con *) sono conteggiate SEPARATAMENTE: la variazione di disponibilita' e' una misura
+          indiretta (le unita' si vendono anche senza promo), non una verifica che la leva sia stata
+          davvero applicata.
+        </p>
+        <div style="display:flex; gap:24px; flex-wrap:wrap;">
+          <div>
+            <strong>Aumento prezzo / unita' scarse ({totale_prezzo} decisioni)</strong>
+            <ul>{_riga_conteggi(riepilogo_esiti["conteggi_prezzo"], totale_prezzo)}</ul>
+          </div>
+          <div>
+            <strong>Ribasso/promo * — misura indiretta ({totale_ribasso} decisioni)</strong>
+            <ul>{_riga_conteggi(riepilogo_esiti["conteggi_ribasso"], totale_ribasso)}</ul>
+          </div>
+        </div>
+        <h3 style="font-size:14px; color:#10334f; margin-top:20px;">Ultime 5 decisioni tracciate</h3>
+        <table>
+          <tr><th>Generata il</th><th>Data target</th><th>Tipologia</th><th>Tipo</th>
+              <th>Prezzo al momento</th><th>Prezzo suggerito</th><th>Esito</th><th>Dettaglio misurazione</th></tr>
+          {righe_ultime}
+        </table>
+        """
+
     return f"""<!doctype html>
 <html lang="it">
 <head>
@@ -1002,6 +1163,9 @@ def costruisci_html(config, oggi_data, situazione, pickup_dettagliato, confronto
   <h2>f) Playbook del revenue manager (storico variazioni prezzo di "RM")</h2>
   {blocco_playbook}
 
+  <h2>g) Esiti delle decisioni (R13)</h2>
+  {blocco_esiti}
+
 </div>
 <footer>revenue-vault &middot; report generato in locale, nessun dato inviato all'esterno</footer>
 </body>
@@ -1039,9 +1203,11 @@ def main(argv=None):
     anomalie = rileva_anomalie(situazione, args.giorni)
     suggerimenti = genera_suggerimenti(conn, situazione, config, oggi_data, args.giorni)
     playbook = analizza_playbook_rm(conn)
+    riepilogo_esiti = costruisci_riepilogo_esiti(conn)
 
     html_report = costruisci_html(
-        config, oggi_data, situazione, pickup_dettagliato, confronto, anomalie, suggerimenti, playbook, args.giorni
+        config, oggi_data, situazione, pickup_dettagliato, confronto, anomalie, suggerimenti, playbook,
+        riepilogo_esiti, args.giorni
     )
 
     percorso_output = Path(args.output)

@@ -25,11 +25,17 @@
     "DEP": { "bassa": [100, 160], "alta": [260, 379] }
   },
   "price_note": "Valori ALTA = prezzi reali Test retta BB sabato 11/07/2026 (tetto di picco). Valori BASSA = stima dalla vecchia griglia manuale 109-239, da raffinare con storico quando sbloccheremo gli importi negli export.",
+  "import_checks": {
+    "salto_camere_libere_max": 2,
+    "variazione_prezzo_pct_max": 30,
+    "nota": "soglie di coerenza temporale (P6) per importa_log_disponibilita.py: sopra questi valori una rilevazione genera un WARNING (mai un blocco), da verificare a occhio"
+  },
   "rules_thresholds": {
     "aumento_prezzo":  { "disponibilita_max_pct": 25, "giorni_minimi": 14, "aumento_pct": 10 },
     "ribasso_o_promo": { "disponibilita_min_pct": 50, "giorni_massimi": 10 },
     "chiusura_ota":    { "disponibilita_critica_pct": 10 },
     "unita_scarse":    { "soglia_unita_assolute": 1, "soglia_totale_unita": 3, "nota": "per tipologie con <=3 unita' (SUP, PRE, JSU, SUI, DEP) ragionare in unita' residue, non in percentuale" },
-    "eventi":          { "impatto_minimo_alert": 7, "nota": "sotto questa soglia di impact_score (1-10) un evento non genera una decision opportunita_evento" }
+    "eventi":          { "impatto_minimo_alert": 7, "nota": "sotto questa soglia di impact_score (1-10) un evento non genera una decision opportunita_evento" },
+    "esiti":           { "giorni_minimi_misurazione": 3, "tolleranza_pct_seguita": 2, "nota": "giorni minimi di attesa dopo una decisione di prezzo prima di provare a misurarne l'esito (R13); tolleranza in % sotto il prezzo suggerito entro cui l'esito conta comunque come 'seguita'" }
   }
 }

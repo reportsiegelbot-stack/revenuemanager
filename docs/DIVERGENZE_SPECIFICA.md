@@ -245,6 +245,46 @@ correzioni (non tra i punti richiesti). Nessuna modifica.
 
 ---
 
+## R13 — esiti_decisioni
+
+**Aggiunta 2026-07-12 (sessione modulo P6/R13).** R13 non era implementata
+al momento della verifica originale di questo documento (era elencata tra
+le "Regole pianificate", P2-R13). Non e' quindi una divergenza da
+verifica-poi-correggere come le voci sopra, ma un'implementazione nuova:
+la registro qui per completezza.
+
+**✅ implementato.** Nuova tabella `decision_outcome` (separata da
+`decision`, che resta invariata): ogni decisione di prezzo generata da
+`genera_suggerimenti()` (aumento_prezzo, unita_scarse_aumento,
+ribasso_promo) viene registrata automaticamente e in modo idempotente
+(stesso suggerimento nello stesso giorno non duplica, tramite indice
+unico). Nuovo script `esiti_decisioni.py` misura l'esito delle decisioni
+con almeno N giorni di anzianita' (default 3, `config.json:
+rules_thresholds.esiti`), usando la rilevazione PIU' RECENTE successiva
+alla decisione sullo STESSO canale su cui era nata (se non esiste,
+"storico non disponibile", mai un valore indovinato — P5); la
+misurazione e' monotona: una decisione gia' misurata viene ri-misurata
+solo se compare una rilevazione piu' recente di quella gia' usata. Nuova
+sezione g) nel report mattutino con i conteggi per esito.
+
+**Perimetro deliberatamente ristretto**: chiusura_ota e opportunita_evento
+NON sono tracciate da R13, perche' non hanno un prezzo suggerito da
+misurare (coerente con l'ambito di P2 v1.1: la ricetta a 5 livelli, e ora
+anche il tracciamento degli esiti, riguardano solo le decisioni che
+modificano un prezzo). Un'eventuale misura di impatto per queste due
+(es. sul pickup) resta **⚪ deferita a una Fase 2** non ancora
+prioritizzata (vedi `docs/SPECIFICA_MOTORE.md`, P?-R15).
+
+**Nota sulla misura di ribasso_promo**: e' dichiaratamente **indiretta**
+(si basa sulla variazione di disponibilita', non su una verifica che la
+leva promozionale sia stata davvero applicata: le unita' si vendono anche
+senza promo). Il campo `measurement_detail` lo dice sempre esplicitamente
+in apertura, e nella sezione g) del report queste decisioni sono
+conteggiate in un blocco separato, mai sommate a quelle di aumento
+prezzo senza distinzione.
+
+---
+
 ## P1 — Copilot prima di autopilot
 
 ✅ **Nessuna divergenza trovata.** Il motore scrive solo nella tabella
@@ -350,7 +390,21 @@ oggi e' un aiuto per il controllo manuale, non un controllo automatico.
 
 **Stato: ⚪ by design, nessuna modifica.** Come da istruzione esplicita
 del task di correzione: P6 e' informativa per scelta, non un difetto da
-correggere in questo giro.
+correggere in quel giro.
+
+**Aggiornamento 2026-07-12 (sessione successiva, modulo P6 dedicato):
+✅ implementato.** `importa_log_disponibilita.py` ora calcola l'hash
+SHA-256 di ogni file importato e verifica automaticamente: (a) coerenza
+interna (data_target >= data_rilevazione, duplicati stessa chiave nel
+file, segnalati e non piu' solo silenziosamente sovrascritti); (b)
+coerenza temporale (salto di `camere_libere` oltre 2 unita', variazione
+di prezzo oltre il 30%, entrambi WARNING non bloccanti, soglie in
+`config.json:import_checks`); (c) registro `import_audit` con righe
+lette/accettate/scartate/in warning e hash del file, per riconoscere un
+re-import identico. Verificato con un CSV di prova che genera
+deliberatamente un salto di disponibilita', un salto di prezzo, un
+duplicato e uno scarto per data incoerente: tutti rilevati correttamente
+(vedi commit del modulo P6/R13).
 
 ---
 
@@ -431,9 +485,11 @@ Cetus-specifico.)
 - **T3** (mapping date tra anni per le griglie, festivita' mobili):
   dipende da R7 (non implementata), quindi non verificabile nel codice
   attuale — non c'e' nulla da confrontare.
-- **P1-R10, P1-R11, P2-R13, P3-R14** (regole pianificate): per
+- **P1-R10, P1-R11, P2-R12, P3-R14** (regole pianificate): per
   definizione non ancora implementate, nessuna divergenza da segnalare
-  (non c'e' codice che le riguardi, ne' dovrebbe essercene).
+  (non c'e' codice che le riguardi, ne' dovrebbe essercene). P2-R13 non
+  e' piu' in questo elenco: e' stata implementata nella sessione del
+  modulo P6/R13 (12/07/2026), vedi la voce "R13 — esiti_decisioni" sopra.
 - **C1, C3, C4**: verificate, nessuna divergenza (C1: `schema_version`
   gestita correttamente, vedi `docs/ARCHITETTURA_DASHBOARD.md`; C3: le
   colonne di `importa_log_disponibilita.py` corrispondono esattamente;

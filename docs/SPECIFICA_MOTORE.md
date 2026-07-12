@@ -1,5 +1,5 @@
 # SPECIFICA MOTORE DECISIONALE — Revenue Cetus / piattaforma
-Versione specifica: 1.1 — 12/07/2026 (v1.1: chiarito ambito di P2, vedi nota)
+Versione specifica: 1.2 — 12/07/2026 (v1.2: P6 attivo, R13 spostata da pianificata ad attiva, vedi note)
 Questo documento è la FONTE DI VERITÀ delle regole del motore. Ogni modifica al
 comportamento passa da qui: lesson → aggiornamento specifica (nuova versione) →
 config.json → codice. Nessuna regola vive solo nel codice.
@@ -23,6 +23,11 @@ P5. Onestà sui dati: mai inventare uno storico. Se il confronto richiesto non
     esiste (es. OTB anno precedente), si scrive "storico non disponibile".
 P6. Numeri: ogni dato trascritto ha un checksum; checksum fallito = righe
     sospette elencate, dato usato come indicativo, mai come esatto.
+    Attivo (v1.2): `importa_log_disponibilita.py` calcola un hash SHA-256 di
+    ogni file importato e verifica automaticamente la coerenza interna
+    (date, duplicati) e temporale (salti di disponibilità/prezzo anomali)
+    di ogni riga, registrando tutto in `import_audit`. I controlli
+    generano solo WARNING, mai un blocco: decide sempre l'umano.
 
 ## Convenzioni temporali
 T1. Confronti anno-su-anno: offset -364 giorni (52 settimane esatte), mai -365.
@@ -64,6 +69,22 @@ R8 | micro_stagioni | min/max mese sorgente | floor = min×0,95, ceiling =
 R9 | differenziali_tipologie | rapporti moltiplicativi dal punto di riferimento
    più recente per tipologia (oggi: picco 2026 BB) | prezzo tipologia = prezzo
    Classic × ratio; da ricalibrare quando esisterà storico per tipologia | L1
+R13 | esiti_decisioni | decisioni di prezzo tracciate in `decision_outcome`
+   (aumento_prezzo, unita_scarse_aumento, ribasso_promo) con almeno N giorni
+   di anzianità | soglie in `rules_thresholds.esiti`
+   (giorni_minimi_misurazione, tolleranza_pct_seguita) | aggiorna
+   `decision_outcome.status`: seguita / parziale / non_seguita / non
+   misurabile, confrontando la rilevazione più recente successiva alla
+   decisione sullo STESSO canale su cui era nata; se manca, "storico non
+   disponibile" (P5). Per ribasso_promo la misura è dichiaratamente
+   indiretta (variazione di disponibilità, non verifica dell'azione: le
+   unità si vendono anche senza promo) e non ha un prezzo suggerito, quindi
+   nessun esito "parziale" per questo tipo. Script dedicato:
+   `esiti_decisioni.py`. Nota: chiusura_ota e opportunità_evento non sono
+   tracciate da R13 in questa fase (nessun prezzo suggerito da misurare);
+   un'eventuale misura di impatto per queste due (es. sul pickup) è Fase 2,
+   non ancora decisa | nessun livello ricetta proprio (misura l'esito di
+   una decisione già tracciata, non genera un nuovo suggerimento)
 
 ## Regole pianificate (non ancora implementate)
 Pnn = priorità (1 alta). Implementare SOLO passando da questa specifica.
@@ -79,11 +100,12 @@ P1-R11 | prezzo_pubblico_vs_griglia | quando entrerà il rate shopping (o
 P2-R12 | confronto_griglie | date allineate, per tipologia: nostra griglia vs
    griglia RM 2027 → delta per data/fascia/mese, sintesi per la decisione di
    dicembre. Modulo autonomo, input = due CSV con stesso schema.
-P2-R13 | esiti_decisioni | ogni decision pending va chiusa: applicata /
-   ignorata / superata, con effetto osservato (pickup nei 7 gg successivi) →
-   base della misura "noi vs RM" e del futuro autopilot.
 P3-R14 | net_revpar_canale | richiede commissioni per canale (dato mancante):
    ricavo netto per canale, input a R3.
+P?-R15 | esiti_evento (Fase 2, non prioritizzata) | misurare l'esito delle
+   decisioni chiusura_ota/opportunità_evento (R13 oggi le esclude: non hanno
+   un prezzo suggerito, servirebbe una metrica diversa, es. sul pickup) →
+   da definire quando servirà davvero.
 
 ## Contratti tra strati (non rompere mai)
 C1. dati.json schema_version: ogni cambio di campi = bump di versione +

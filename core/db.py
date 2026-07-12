@@ -110,6 +110,49 @@ CREATE TABLE IF NOT EXISTS external_signal (
 );
 CREATE INDEX IF NOT EXISTS idx_signal_data
     ON external_signal (signal_date);
+
+-- Registro di controllo (P6) di ogni importazione del log disponibilita':
+-- una riga per ogni esecuzione di importa_log_disponibilita.py, con il
+-- conteggio delle righe lette/accettate/scartate/in warning e l'hash del
+-- file, per riconoscere un re-import identico.
+CREATE TABLE IF NOT EXISTS import_audit (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    import_ts       TEXT NOT NULL,
+    source_file     TEXT NOT NULL,
+    file_sha256     TEXT NOT NULL,
+    rows_read       INTEGER NOT NULL,
+    rows_accepted   INTEGER NOT NULL,
+    rows_rejected   INTEGER NOT NULL,
+    rows_warning    INTEGER NOT NULL,
+    detail_json     TEXT
+);
+
+-- Tracciamento esiti (R13) delle decisioni di prezzo generate dal motore
+-- (aumento_prezzo, unita_scarse_aumento, ribasso_promo). Una riga per
+-- suggerimento generato in un certo giorno; lo stato viene aggiornato in
+-- un secondo momento da esiti_decisioni.py, quando ci sono abbastanza
+-- rilevazioni successive per misurarlo. Tabella separata da "decision"
+-- (che resta invariata): "outcome" li' e' una scelta umana mai aggiornata
+-- automaticamente, "status" qui e' un esito misurato dal sistema.
+CREATE TABLE IF NOT EXISTS decision_outcome (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    generated_date        TEXT NOT NULL,   -- giorno in cui il report ha generato il suggerimento
+    target_date           TEXT NOT NULL,
+    capacity_unit_id      INTEGER REFERENCES capacity_unit(id),
+    decision_type         TEXT NOT NULL,   -- aumento_prezzo | unita_scarse_aumento | ribasso_promo
+    channel               TEXT NOT NULL,   -- canale della rilevazione su cui si basava la decisione
+    current_price         REAL,            -- prezzo pubblicato al momento della decisione
+    current_units         INTEGER,         -- unita' disponibili al momento della decisione
+    suggested_price       REAL,            -- prezzo suggerito (NULL per ribasso_promo: nessun numero fisso)
+    reasoning_json        TEXT NOT NULL,   -- i livelli della motivazione, serializzati
+    status                TEXT NOT NULL DEFAULT 'pending'
+                           CHECK (status IN ('pending', 'followed', 'not_followed', 'partial', 'not_measurable')),
+    measured_ts           TEXT,
+    measured_snapshot_date TEXT,           -- data_rilevazione usata per l'ultima misurazione (monotona)
+    measurement_detail    TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_outcome_dedup
+    ON decision_outcome (generated_date, target_date, COALESCE(capacity_unit_id, -1), decision_type);
 """
 
 
