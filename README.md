@@ -108,6 +108,16 @@ mattina), per avere sempre un report aggiornato. Con il tempo, piu'
 snapshot registri e piu' lo storico prenotazioni cresce, piu' il report
 (pickup, confronto anno su anno, suggerimenti) diventa preciso.
 
+## Documentazione di approfondimento
+
+Nella cartella `docs/` (per chi vuole capire le regole in dettaglio o
+programmare, non necessaria per l'uso quotidiano):
+
+- `docs/SPECIFICA_MOTORE.md` — la fonte di verità delle regole di prezzo.
+- `docs/ARCHITETTURA_DASHBOARD.md` — come e' fatto il contratto dati della dashboard.
+- `docs/DIVERGENZE_SPECIFICA.md` — stato di allineamento tra specifica e codice.
+- `docs/CONTRATTO_RATE_SHOPPING.md` — schema dati per il confronto prezzi con i competitor (R11), non ancora attivo: definisce come registrare i prezzi osservati quando si deciderà di iniziare.
+
 ## Domande frequenti
 
 **Devo installare qualcosa?**
