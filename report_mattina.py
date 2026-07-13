@@ -504,6 +504,11 @@ def costruisci_livelli_prezzo(conn, config, voce, tipo_regola, tipologia_scarsa,
 
 
 def registra_decisione(conn, oggi_data, voce, decision_type, suggestion, reasoning, urgenza, dati_extra=None):
+    """Registra un suggerimento nella tabella decision. Idempotente: se lo
+    stesso suggerimento (stesso giorno di generazione, stessa target_date,
+    stessa tipologia, stesso tipo di decisione) e' gia' stato registrato
+    oggi, l'INSERT viene ignorato invece di creare una riga duplicata
+    (indice unico creato in core/db.py:crea_schema)."""
     dati = {
         "disponibilita_pct": voce.get("disponibilita_pct"),
         "disponibili": voce.get("disponibili"),
@@ -517,7 +522,7 @@ def registra_decisione(conn, oggi_data, voce, decision_type, suggestion, reasoni
 
     conn.execute(
         """
-        INSERT INTO decision (created_ts, target_date, capacity_unit_id, decision_type, suggestion, reasoning, data_snapshot_json, outcome)
+        INSERT OR IGNORE INTO decision (created_ts, target_date, capacity_unit_id, decision_type, suggestion, reasoning, data_snapshot_json, outcome)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
         """,
         (

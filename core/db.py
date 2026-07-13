@@ -86,6 +86,11 @@ CREATE TABLE IF NOT EXISTS channel_event (
 -- Suggerimenti generati dal motore a regole (report_mattina.py). Ogni riga
 -- e' una decisione proposta, che l'utente potra' in futuro segnare come
 -- accettata o ignorata (per ora resta 'pending').
+-- L'indice unico (creato in crea_schema, dopo aver ripulito eventuali
+-- duplicati storici) rende idempotente la registrazione: stesso giorno di
+-- generazione + stessa data_target + stessa tipologia + stesso tipo di
+-- decisione non genera piu' righe duplicate se report_mattina.py gira piu'
+-- volte nello stesso giorno.
 CREATE TABLE IF NOT EXISTS decision (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     created_ts          TEXT NOT NULL,
@@ -171,9 +176,38 @@ def connetti(percorso_db=NOME_DB_DEFAULT):
     return conn
 
 
+def _deduplica_decision_esistenti(conn):
+    """Ripulisce i duplicati storici della tabella decision (difetto
+    emerso nella sessione R13: report_mattina.py non era idempotente e
+    generava una riga nuova ad ogni esecuzione, anche piu' volte nello
+    stesso giorno). Duplicato = stessa combinazione (giorno di
+    generazione, target_date, capacity_unit_id, decision_type); tra righe
+    duplicate tiene quella con id piu' alto (la piu' recente). Idempotente:
+    se non ci sono duplicati non cambia nulla. Va eseguita PRIMA di creare
+    l'indice unico corrispondente, altrimenti la creazione dell'indice
+    fallirebbe su un database con duplicati preesistenti."""
+    conn.execute(
+        """
+        DELETE FROM decision
+        WHERE id NOT IN (
+            SELECT MAX(id)
+            FROM decision
+            GROUP BY substr(created_ts, 1, 10), target_date, COALESCE(capacity_unit_id, -1), decision_type
+        )
+        """
+    )
+
+
 def crea_schema(conn):
     """Crea tutte le tabelle del sistema, se non esistono gia'."""
     conn.executescript(SCHEMA_SQL)
+    _deduplica_decision_esistenti(conn)
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_decision_dedup
+            ON decision (substr(created_ts, 1, 10), target_date, COALESCE(capacity_unit_id, -1), decision_type)
+        """
+    )
     conn.commit()
 
 
