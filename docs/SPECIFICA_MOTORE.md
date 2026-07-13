@@ -1,5 +1,5 @@
 # SPECIFICA MOTORE DECISIONALE — Revenue Cetus / piattaforma
-Versione specifica: 1.2 — 12/07/2026 (v1.2: P6 attivo, R13 spostata da pianificata ad attiva, vedi note)
+Versione specifica: 1.3 — 13/07/2026 (v1.3: R7-R9 da pianificate a ossatura attiva, vedi note)
 Questo documento è la FONTE DI VERITÀ delle regole del motore. Ogni modifica al
 comportamento passa da qui: lesson → aggiornamento specifica (nuova versione) →
 config.json → codice. Nessuna regola vive solo nel codice.
@@ -69,6 +69,26 @@ R8 | micro_stagioni | min/max mese sorgente | floor = min×0,95, ceiling =
 R9 | differenziali_tipologie | rapporti moltiplicativi dal punto di riferimento
    più recente per tipologia (oggi: picco 2026 BB) | prezzo tipologia = prezzo
    Classic × ratio; da ricalibrare quando esisterà storico per tipologia | L1
+
+R7-R9 — ossatura attiva (v1.3): `genera_griglia.py` implementa le tre regole
+   sopra come pipeline di 8 fasi pure e componibili (mapping calendario,
+   classificazione fascia, delta base, correzioni evento, floor/ceiling,
+   estensione tipologie, regola scarsità, override esplicito), parametri in
+   `griglia_config.json` (mai numeri cablati nel codice). Verificata
+   riproducendo esattamente `griglia_2027_classic_roomonly_v2.csv` e
+   `griglia_2027_tutte_tipologie_v2.csv` (griglie costruite a mano, non nel
+   repo): 1773/1776 celle identiche (99,83%) senza override; con un
+   override di 3 righe per l'unica data con una divergenza residua
+   documentata (2027-10-11: il prezzo sorgente supera la mediana del mese
+   ma la griglia originale non ha applicato lo sconto "sopra mediana" —
+   non è stato un parametro sbagliato, è un'eccezione puntuale della
+   griglia originale), il diff è zero. Dettaglio completo della verifica
+   in `docs/DIVERGENZE_SPECIFICA.md`. Resta "ossatura" perché la mappatura
+   calendario generale (proxy per date fuori dal range dei dati sorgente,
+   festività mobili come Pasqua) richiede ancora una preparazione/curazione
+   dei dati sorgente in ingresso: lo script non inventa da solo quali date
+   sono "Pasqua" o quali eccezioni puntuali servono, per quello c'è il file
+   di override.
 R13 | esiti_decisioni | decisioni di prezzo tracciate in `decision_outcome`
    (aumento_prezzo, unita_scarse_aumento, ribasso_promo) con almeno N giorni
    di anzianità | soglie in `rules_thresholds.esiti`

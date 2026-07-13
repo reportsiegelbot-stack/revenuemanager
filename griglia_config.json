@@ -1,0 +1,75 @@
+{
+  "_readme": "Parametri per genera_griglia.py (ossatura R7-R9). Ogni chiave ha un campo '_nota' con la provenienza: 'dato di partenza' (fornito dall'utente/dalla specifica, non derivato) oppure 'derivato dalla griglia v2, verificato' (ricavato riproducendo esattamente i CSV griglia_2027_*_v2.csv). Vedi docs/DIVERGENZE_SPECIFICA.md per il dettaglio della verifica e le divergenze residue.",
+
+  "mapping_calendario": {
+    "offset_giorni": 728,
+    "_nota": "dato di partenza (2 anni meno 2 giorni per allineare il giorno della settimana, 2025->2027, come da docs/SPECIFICA_MOTORE.md T3: '2025->2027: +2'). Verificato: 728 giorni e' la differenza ESATTA (data_target - data_sorgente_2025) osservata in 177/179 righe non-proxy di griglia_2027_classic_roomonly_v2.csv."
+  },
+
+  "proxy_data_sorgente": {
+    "correzione_pct": -10,
+    "_nota": "derivato dalla griglia v2, verificato con ambiguita' residua dichiarata: quando la data sorgente naturale (data_target - offset_giorni) cade prima dell'inizio dei dati sorgente disponibili, si usa la rilevazione piu' vicina con lo stesso giorno della settimana e si applica questa correzione. Nella griglia v2 la colonna 'flag' dichiara -10%, la colonna 'motivazione' -9%: con -10% il confronto sulle 2 date coinvolte (2027-03-24, 2027-03-25) torna esatto su tutte le 8 tipologie (16/16 celle); con -9% ci sono 8 divergenze su 16. Usato -10%."
+  },
+
+  "fasce_occupazione": {
+    "soglie_pct": { "A": 97, "B": 90, "C": 75 },
+    "nota_soglie": "A: occ >= soglia_A; B: soglia_B <= occ < soglia_A; C: soglia_C <= occ < soglia_B; D: occ < soglia_C",
+    "_nota": "dato di partenza (docs/SPECIFICA_MOTORE.md, R7). Verificato su tutte le 222 righe di griglia_2027_classic_roomonly_v2.csv: nessun valore di occ_2025_pct trovato vicino a un confine con esito ambiguo (fascia A: occ in [97.6,100.0]; B: [90.5,95.2]; C: [76.2,88.1]; D: [26.2,73.8])."
+  },
+
+  "delta_prezzo_per_fascia_pct": {
+    "A": 10,
+    "B": 5,
+    "C": 2.5,
+    "D": 0,
+    "D_sopra_mediana_mese": -5,
+    "_nota": "A/B/C/D e D_sopra_mediana_mese: dato di partenza (docs/SPECIFICA_MOTORE.md, R7). Verificato ESATTO (0 divergenze su 178 righe pulite, fasce A/B/C, e 34/35 su fascia D) applicando il delta al prezzo sorgente e arrotondando con la regola in 'arrotondamento'. D_sopra_mediana_mese si applica solo se prezzo_sorgente > mediana di TUTTI i prezzi sorgente del mese sorgente (qualunque fascia); confermato migliore di 'mediana solo tra le righe D del mese' (1 divergenza contro 5)."
+  },
+
+  "arrotondamento": {
+    "tipo": "vicino_termina_4_o_9",
+    "formula": "5 * round((prezzo_grezzo - 4) / 5) + 4",
+    "_nota": "PARAMETRO SECONDARIO SCOPERTO in fase di verifica, non presente nella richiesta originale: ogni prezzo finale della griglia v2 e' il valore intero piu' vicino che termina per 4 o 9 (es. 209, 214, 219, 224...), non un arrotondamento all'euro semplice. Verificato: applicando questa regola a tutti i prezzi grezzi calcolati si riproducono 1773 celle su 1776 (99.83%) di griglia_2027_tutte_tipologie_v2.csv esattamente; le 3 celle residue sono tutte sulla stessa data (2027-10-11), vedi 'scarsita' e la nota sulla divergenza residua in docs/DIVERGENZE_SPECIFICA.md."
+  },
+
+  "correzioni_eventi": [
+    {
+      "descrizione": "Pasqua 2027 (mappata su Pasqua 2025, correzione per stagione anticipata)",
+      "date_target": ["2027-03-26", "2027-03-27", "2027-03-28", "2027-03-29"],
+      "correzione_pct": -15,
+      "_nota": "dato di partenza fornito dall'utente (-15%). Verificato ESATTO su tutte le 4 date x 8 tipologie (32/32 celle): la correzione si applica MOLTIPLICATIVAMENTE sopra il delta di fascia gia' calcolato (incluso l'eventuale -5% 'sopra mediana' per le tipologie non scarse, dalle quali le tipologie scarse restano invece sempre esenti)."
+    }
+  ],
+
+  "micro_stagioni_floor_ceiling": {
+    "floor_moltiplicatore": 0.95,
+    "ceiling_moltiplicatore": 1.15,
+    "riferimento": "min/max dei prezzi sorgente del mese sorgente (non del mese target)",
+    "_nota": "dato di partenza (docs/SPECIFICA_MOTORE.md, R8: floor = min mese sorgente x0,95, ceiling = max mese sorgente x1,15). Verificato: nel periodo marzo-ottobre 2027 di griglia_2027_classic_roomonly_v2.csv questo corridoio non ha MAI ristretto un prezzo gia' calcolato con le regole di fascia/eventi (0 casi osservati su 222 righe): resta nella pipeline come rete di sicurezza per input futuri con variazioni piu' estreme di quelle osservate qui, ma e' dormiente su questo dataset — non e' stato necessario per ottenere il diff quasi-zero."
+  },
+
+  "rapporti_tipologie": {
+    "CLA": 1.0,
+    "COM": 1.0334075723830736,
+    "SUP": 1.066815144766147,
+    "DLX": 1.1224944320712695,
+    "PRE": 1.4788418708240534,
+    "JSU": 1.512249443207127,
+    "SUI": 1.5679287305122493,
+    "DEP": 0.844097995545657,
+    "_nota": "= config.json price_ranges[<tipologia>].alta[1] / price_ranges['CLA'].alta[1] (il 'picco 2026 BB', gia' presente in config.json: non un dato nuovo). Verificato per intersezione di intervalli su 101 righe pulite per tipologia (solo fasce B e C, senza correzioni evento, per isolare l'effetto scarsita' di fascia A/D): l'intervallo compatibile con tutte le righe si restringe a un'ampiezza inferiore a 0,002 per ogni tipologia, e il rapporto di config.json cade sempre al suo interno. Applicato moltiplicativamente al prezzo SORGENTE di Classic (non al prezzo finale di Classic), poi soggetto alle stesse regole di fascia/eventi/scarsita'."
+  },
+
+  "scarsita": {
+    "soglia_unita_totali": 3,
+    "mai_sconto_fascia_D": true,
+    "maggiorazione_fascia_A_pct": 12,
+    "_nota": "soglia_unita_totali e mai_sconto_fascia_D: dato di partenza fornito dall'utente ('sulle tipologie scarse nessun prezzo sotto il riferimento, mai sconti in griglia di apertura'). maggiorazione_fascia_A_pct=12 dato di partenza fornito dall'utente. Verificato su SUP/PRE/JSU/SUI/DEP (le 5 tipologie con unita_totali<=3 in config.json): (a) in fascia D non ricevono MAI il delta -5% 'sopra mediana' riservato alle non-scarse, restano sempre al delta base 0%; (b) in fascia A usano +12% invece di +10% sullo stesso prezzo sorgente di Classic, poi il rapporto moltiplicativo. 0 divergenze residue attribuibili a questa regola su tutta griglia_2027_tutte_tipologie_v2.csv."
+  },
+
+  "trattamento_default": "Room Only",
+  "_nota_trattamento": "dato di partenza, osservato invariato su tutte le righe di entrambe le griglie v2 (sempre 'Room Only').",
+
+  "file_override_default": "griglia_override.csv",
+  "_nota_override": "CSV facoltativo, colonne: data,tipologia,prezzo_forzato,motivo. Applicato come ULTIMA fase, dopo tutte le altre: sovrascrive il prezzo calcolato per la combinazione (data,tipologia) indicata. Serve per le eccezioni puntuali decise a mano che questa ossatura non formalizza (es. la divergenza residua del 2027-10-11 in griglia_2027_classic_roomonly_v2.csv, dove il prezzo sorgente e' solo 10 EUR sopra la mediana del mese ma la griglia originale non ha applicato lo sconto 'sopra mediana': non e' stato nascosto ne' la regola e' stata piegata per farlo tornare, vedi docs/DIVERGENZE_SPECIFICA.md)."
+}

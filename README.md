@@ -23,6 +23,7 @@ installare: usa solo cio' che c'e' gia' dentro Python).
 | `report_mattina.py` | **Il cuore del sistema.** Legge tutti i dati e genera `report/report_oggi.html`: la situazione dei prossimi 30 giorni, il confronto con l'anno scorso, le date da controllare e i suggerimenti su prezzi/canali. Ogni suggerimento di prezzo viene anche registrato per il tracciamento degli esiti (vedi `esiti_decisioni.py`). |
 | `esiti_decisioni.py` | Da lanciare ogni tanto (es. una volta a settimana): controlla i suggerimenti di prezzo dati qualche giorno fa e verifica cosa e' successo davvero (il prezzo e' stato alzato? la disponibilita' si e' mossa?), cosi' nel tempo si vede quanti suggerimenti vengono seguiti. Il risultato compare anche nella sezione "Esiti delle decisioni" di `report_mattina.py`. |
 | `demo.py` | Esegue in un colpo solo `init_db.py` + `genera_demo.py` + `report_mattina.py`, per vedere tutto il sistema funzionante subito. |
+| `genera_griglia.py` | Strumento per chi costruisce la griglia tariffaria dell'anno successivo (es. 2027): a partire da un CSV con occupazione e prezzo dell'anno di riferimento, calcola automaticamente fasce, prezzi e regole per le tipologie scarse, usando solo i parametri di `griglia_config.json` (mai numeri fissi nel codice). Pensato per rendere ripetibile con un comando la ricalibrazione annuale della griglia, invece che rifare il lavoro a mano. Non e' collegato al resto del sistema: produce un CSV da rivedere e usare poi come `griglia_2027_tutte_tipologie.csv`. |
 
 ## I 3 comandi essenziali
 

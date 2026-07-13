@@ -206,6 +206,20 @@ passarlo alla dashboard cosi' com'e'.
 **Stato: ⚪ deferita.** Esplicitamente fuori scope in questo giro di
 correzioni (non tra i punti richiesti). Nessuna modifica.
 
+**Aggiornamento 2026-07-13 (sessione ossatura R7-R9):
+🟡 ossatura implementata e verificata, non ancora "in produzione".**
+Nuovo script `genera_griglia.py` implementa la classificazione in fascia
+e il delta di prezzo (+10%/+12% scarse, +5%, +2,5%, 0%/-5%) come funzioni
+pure parametrizzate da `griglia_config.json`. Verificato riproducendo
+`griglia_2027_classic_roomonly_v2.csv` (griglia costruita a mano,
+fornita per la verifica, non nel repo): su 222 righe, 221 identiche
+(99,5%); l'unica divergenza (2027-10-11) è documentata sotto "Divergenza
+residua verificata". Resta "non in produzione" nel senso che
+`report_mattina.py`/`dashboard/esporta_stato.py` continuano a leggere un
+CSV di griglia gia' pronto (invariati in questa sessione, come da scope):
+`genera_griglia.py` e' lo strumento per COSTRUIRE quel CSV, non ancora
+collegato al resto della pipeline.
+
 ---
 
 ## R8 — micro_stagioni ⚪ NON IMPLEMENTATA
@@ -227,6 +241,19 @@ suggerimenti giorno per giorno).
 **Stato: ⚪ deferita.** Esplicitamente fuori scope in questo giro di
 correzioni (non tra i punti richiesti). Nessuna modifica.
 
+**Aggiornamento 2026-07-13 (sessione ossatura R7-R9):
+🟡 ossatura implementata, verificata come DORMIENTE su questo dataset.**
+`genera_griglia.py:applica_floor_ceiling` implementa il corridoio
+floor=min×0,95/ceiling=max×1,15 sul mese sorgente, parametri in
+`griglia_config.json:micro_stagioni_floor_ceiling`. Verificato che su
+`griglia_2027_classic_roomonly_v2.csv` (marzo-ottobre 2027) questo
+corridoio non ha mai ristretto un prezzo gia' calcolato dalle regole di
+fascia/eventi (0 casi osservati su 222 righe): il codice esiste e resta
+attivo come rete di sicurezza, ma non e' stato necessario per riprodurre
+la griglia esistente. Non e' stato "aggiustato" per farlo tornare: e'
+semplicemente rimasto silenzioso perche' i dati osservati non hanno mai
+richiesto il clamp.
+
 ---
 
 ## R9 — differenziali_tipologie ⚪ NON IMPLEMENTATA
@@ -242,6 +269,49 @@ tipo "prezzo Classic × ratio".
 
 **Stato: ⚪ deferita.** Esplicitamente fuori scope in questo giro di
 correzioni (non tra i punti richiesti). Nessuna modifica.
+
+**Aggiornamento 2026-07-13 (sessione ossatura R7-R9):
+✅ implementata e verificata con precisione.** `genera_griglia.py` estende
+Classic alle altre 7 tipologie con un rapporto moltiplicativo per
+tipologia (mai un supplemento fisso in euro), in
+`griglia_config.json:rapporti_tipologie`. Il rapporto usato e' esattamente
+`config.json price_ranges[<tipologia>].alta[1] / price_ranges['CLA'].alta[1]`
+(il "picco 2026 BB" citato dalla specifica: un dato gia' presente in
+config.json, non nuovo). Verificato per intersezione di intervalli su
+`griglia_2027_tutte_tipologie_v2.csv` (griglia a 8 tipologie, fornita per
+la verifica, non nel repo): per ognuna delle 7 tipologie estese,
+l'intervallo di rapporti compatibile con i dati osservati (101 righe
+pulite per tipologia, fasce B/C senza correzioni evento, per isolare
+l'effetto scarsita' di fascia A/D) si restringe a un'ampiezza inferiore a
+0,002, e il rapporto di config.json cade sempre al suo interno: nessuna
+divergenza attribuibile a questa regola.
+
+### Divergenza residua verificata (comune a R7/R8/R9): 2027-10-11
+
+Confrontando l'intera griglia generata (222 date × 8 tipologie = 1776
+celle) con `griglia_2027_tutte_tipologie_v2.csv`: **1773/1776 celle
+identiche (99,83%)**. Le 3 celle divergenti sono tutte sulla stessa data,
+`2027-10-11`, sulle 3 tipologie NON scarse (CLA, COM, DLX — le tipologie
+scarse non sono coinvolte perche' esenti per regola dallo sconto "sopra
+mediana" di fascia D): il prezzo sorgente di quella data (194 EUR) e'
+sopra la mediana del mese sorgente (184 EUR), quindi per la regola R7
+dovrebbe scattare lo sconto "sopra mediana" (-5%, atteso 184 EUR), ma la
+griglia v2 originale mostra 194 EUR (nessuno sconto applicato). Ipotesi:
+scelta manuale del revenue manager su quella singola data (margine sopra
+mediana modesto, solo 10 EUR), non un errore di parametro — **non e'
+stata "aggiustata" la soglia della mediana per farla tornare**, come da
+istruzione esplicita di questa sessione. Con un override di 3 righe
+(`griglia_override.csv`, fase 8) che forza il prezzo osservato su quella
+data per le 3 tipologie coinvolte, il confronto e' **diff = zero** su
+tutte le 1776 celle.
+
+Nel percorso di verifica e' anche emerso un parametro secondario non
+dichiarato nella richiesta originale: ogni prezzo finale delle griglie v2
+e' il valore intero piu' vicino che termina per 4 o 9 (es. 209, 214,
+219...), non un arrotondamento all'euro semplice. Documentato in
+`griglia_config.json:arrotondamento` con la nota "PARAMETRO SECONDARIO
+SCOPERTO", non e' stato deciso ne' inventato: e' stato dedotto
+riproducendo esattamente 1773 celle su 1776.
 
 ---
 
